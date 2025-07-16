@@ -77,6 +77,54 @@
             color: #856404;
             border: 1px solid #ffeaa7;
         }
+        .file-list {
+            margin-top: 15px;
+        }
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #c3e6cb;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+        }
+        .file-info {
+            flex-grow: 1;
+        }
+        .file-name {
+            font-weight: bold;
+            color: #155724;
+        }
+        .file-size {
+            font-size: 12px;
+            color: #6c757d;
+        }
+        .remove-btn {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .remove-btn:hover {
+            background-color: #c82333;
+        }
+        .json-result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
         .upload-section {
             border: 1px solid #ddd;
             padding: 20px;
@@ -101,9 +149,10 @@
     <div class="form-section">
         <h3>Step 1: Select and Upload File</h3>
         <div class="form-group">
-            <label for="file">Choose File:</label>
+            <label for="file">Choose Files:</label>
             <input type="file" id="file" name="file" multiple />
             <div id="fileStatus" class="file-status"></div>
+            <div id="fileList" class="file-list"></div>
         </div>
         <h3>Step 2: Fill Form and Submit</h3>
         <form id="uploadForm">
@@ -122,68 +171,82 @@
     </div>
     
     <div id="message"></div>
+    <div id="jsonResult" class="json-result" style="display: none;"></div>
 
     <script>
-        let uploadedFileName = null;
+        let uploadedFiles = [];
 
         document.getElementById('file').addEventListener('change', async function(e) {
             e.preventDefault();
             e.stopPropagation();
             console.log('File change event triggered');
-            const file = e.target.files[0];
-            if (!file) {
-                console.log('No file selected');
+            const files = Array.from(e.target.files);
+            if (!files.length) {
+                console.log('No files selected');
                 showFileStatus('', '');
                 return;
             }
 
-            console.log('File selected:', file.name);
-            showFileStatus(`Uploading: ${file.name}...`, 'file-uploading');
+            showFileStatus(`Uploading ${files.length} file(s)...`, 'file-uploading');
 
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                console.log('Starting fetch request...');
-                const response = await fetch('http://localhost:5108/api/LocalUpload/upload', {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                console.log('Response received:', response.status);
+            for (const file of files) {
+                console.log('File selected:', file.name);
                 
-                if (response.ok) {
-                    const result = await response.json();
-                    console.log('Upload successful:', result);
-                    uploadedFileName = result.fileName;
-                    showFileStatus(`✓ File uploaded: ${result.originalName} (${(result.size / 1024).toFixed(1)} KB)`, 'file-uploaded');
-                    showMessage(`File uploaded to temp folder successfully`, 'info');
-                } else {
-                    const error = await response.text();
-                    console.log('Upload failed:', error);
-                    showFileStatus('Upload failed', 'error');
-                    showMessage(`Upload failed: ${error}`, 'error');
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    console.log('Starting fetch request...');
+                    const response = await fetch('http://localhost:5108/api/LocalUpload/upload', {
+                        method: 'POST',
+                        body: formData,
+                    });
+
+                    console.log('Response received:', response.status);
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        console.log('Upload successful:', result);
+                        
+                        uploadedFiles.push({
+                            fileName: result.fileName,
+                            originalName: result.originalName,
+                            size: result.size
+                        });
+                        
+                        updateFileList();
+                        showMessage(`${file.name} uploaded successfully`, 'info');
+                    } else {
+                        const error = await response.text();
+                        console.log('Upload failed:', error);
+                        showMessage(`Upload failed for ${file.name}: ${error}`, 'error');
+                    }
+                } catch (error) {
+                    console.log('Fetch error:', error);
+                    showMessage(`Upload error for ${file.name}: ${error.message}`, 'error');
                 }
-            } catch (error) {
-                console.log('Fetch error:', error);
-                showFileStatus('Upload failed', 'error');
-                showMessage(`Upload error: ${error.message}`, 'error');
             }
+            
+            showFileStatus(`${uploadedFiles.length} file(s) uploaded`, 'file-uploaded');
+            e.target.value = '';
         });
 
         document.getElementById('uploadForm').addEventListener('submit', async function(e) {
             console.log("submitting in uploadForm");
             e.preventDefault();
 
-            if (!uploadedFileName) {
-                showMessage('Please select and upload a file first', 'error');
+            if (!uploadedFiles.length) {
+                showMessage('Please select and upload at least one file first', 'error');
                 return;
             }
 
             const formData = new FormData();
             formData.append('title', document.getElementById('title').value);
             formData.append('description', document.getElementById('description').value);
-            formData.append('fileName', uploadedFileName);
+            
+            uploadedFiles.forEach(file => {
+                formData.append('fileNames', file.fileName);
+            });
 
             try {
                 const response = await fetch('http://localhost:5108/api/LocalUpload/submit', {
@@ -193,11 +256,13 @@
 
                 if (response.ok) {
                     const result = await response.json();
-                    showMessage(`Form submitted successfully! File moved to uploads folder: ${result.fileName}`, 'success');
+                    showMessage(`Form submitted successfully! ${uploadedFiles.length} file(s) moved to uploads folder`, 'success');
+                    showJsonResult(result);
                     document.getElementById('uploadForm').reset();
                     document.getElementById('file').value = '';
                     showFileStatus('', '');
-                    uploadedFileName = null;
+                    uploadedFiles = [];
+                    updateFileList();
                 } else {
                     const error = await response.text();
                     showMessage(`Submit failed: ${error}`, 'error');
@@ -217,6 +282,54 @@
             const statusDiv = document.getElementById('fileStatus');
             statusDiv.textContent = text;
             statusDiv.className = `file-status ${type}`;
+        }
+
+        function updateFileList() {
+            const fileListDiv = document.getElementById('fileList');
+            fileListDiv.innerHTML = '';
+            
+            uploadedFiles.forEach((file, index) => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                
+                fileItem.innerHTML = `
+                    <div class="file-info">
+                        <div class="file-name">${file.originalName}</div>
+                        <div class="file-size">${(file.size / 1024).toFixed(1)} KB</div>
+                    </div>
+                    <button class="remove-btn" onclick="removeFile(${index})">Remove</button>
+                `;
+                
+                fileListDiv.appendChild(fileItem);
+            });
+        }
+
+        async function removeFile(index) {
+            const fileToRemove = uploadedFiles[index];
+            
+            try {
+                const response = await fetch(`http://localhost:5108/api/LocalUpload/delete/${fileToRemove.fileName}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    uploadedFiles.splice(index, 1);
+                    updateFileList();
+                    showFileStatus(`${uploadedFiles.length} file(s) uploaded`, uploadedFiles.length ? 'file-uploaded' : '');
+                    showMessage(`File ${fileToRemove.originalName} removed successfully`, 'info');
+                } else {
+                    const error = await response.text();
+                    showMessage(`Failed to remove file: ${error}`, 'error');
+                }
+            } catch (error) {
+                showMessage(`Error removing file: ${error.message}`, 'error');
+            }
+        }
+
+        function showJsonResult(data) {
+            const jsonResultDiv = document.getElementById('jsonResult');
+            jsonResultDiv.textContent = JSON.stringify(data, null, 2);
+            jsonResultDiv.style.display = 'block';
         }
     </script>
 </body>

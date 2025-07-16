@@ -14,45 +14,59 @@ namespace file_upload.Controllers
         }
 
         [HttpPost("submit")]
-        public async Task<IActionResult> SubmitForm([FromForm] string title, [FromForm] string description, [FromForm] string fileName)
+        public async Task<IActionResult> SubmitForm([FromForm] string title, [FromForm] string description, [FromForm] List<string> fileNames)
         {
-            if (string.IsNullOrEmpty(fileName))
+            if (fileNames == null || !fileNames.Any())
             {
-                return BadRequest("No file name provided");
+                return BadRequest("No file names provided");
             }
 
             var tempFolder = Path.Combine(_environment.ContentRootPath, "temp");
             var uploadFolder = Path.Combine(_environment.ContentRootPath, "uploads");
-            var tempFilePath = Path.Combine(tempFolder, fileName);
-
-            if (!System.IO.File.Exists(tempFilePath))
-            {
-                return BadRequest("File not found in temp folder");
-            }
 
             if (!Directory.Exists(uploadFolder))
             {
                 Directory.CreateDirectory(uploadFolder);
             }
 
-            var finalFilePath = Path.Combine(uploadFolder, fileName);
+            var movedFiles = new List<object>();
+            var errors = new List<string>();
 
-            try
+            foreach (var fileName in fileNames)
             {
-                System.IO.File.Move(tempFilePath, finalFilePath);
+                var tempFilePath = Path.Combine(tempFolder, fileName);
 
-                return Ok(new
+                if (!System.IO.File.Exists(tempFilePath))
                 {
-                    Title = title,
-                    Description = description,
-                    FileName = fileName,
-                    FinalPath = finalFilePath
-                });
+                    errors.Add($"File not found in temp folder: {fileName}");
+                    continue;
+                }
+
+                var finalFilePath = Path.Combine(uploadFolder, fileName);
+
+                try
+                {
+                    System.IO.File.Move(tempFilePath, finalFilePath);
+                    movedFiles.Add(new { FileName = fileName, FinalPath = finalFilePath });
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Error moving file {fileName}: {ex.Message}");
+                }
             }
-            catch (Exception ex)
+
+            if (errors.Any() && !movedFiles.Any())
             {
-                return StatusCode(500, $"Error moving file: {ex.Message}");
+                return StatusCode(500, string.Join("; ", errors));
             }
+
+            return Ok(new
+            {
+                Title = title,
+                Description = description,
+                MovedFiles = movedFiles,
+                Errors = errors
+            });
         }
 
         [HttpPost("upload")]
@@ -110,6 +124,33 @@ namespace file_upload.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error uploading file: {ex.Message}");
+            }
+        }
+
+        [HttpDelete("delete/{fileName}")]
+        public IActionResult DeleteFile(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName))
+            {
+                return BadRequest("File name is required");
+            }
+
+            var tempFolder = Path.Combine(_environment.ContentRootPath, "temp");
+            var filePath = Path.Combine(tempFolder, fileName);
+
+            if (!System.IO.File.Exists(filePath))
+            {
+                return NotFound("File not found");
+            }
+
+            try
+            {
+                System.IO.File.Delete(filePath);
+                return Ok(new { Message = "File deleted successfully", FileName = fileName });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error deleting file: {ex.Message}");
             }
         }
     }

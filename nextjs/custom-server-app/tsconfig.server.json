@@ -1,14 +1,16 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "ES2022",
+    "target": "ES2022",
     "outDir": "dist",
-    "lib": ["ES2017"],
-    "target": "ES2017",
+    "lib": ["ES2022"],
     "moduleResolution": "node",
     "strict": true,
     "isolatedModules": false,
-    "noEmit": false
+    "noEmit": false,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true
   },
-  "include": ["server.mts"]
+  "include": ["server.mts", "lib/**/*", "types/**/*"]
 }

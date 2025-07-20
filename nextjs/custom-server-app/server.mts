@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
-import { parse } from "url";
 import next from "next";
 import { Server } from "socket.io";
+import util from "./lib/utils.js";
 
 const port = parseInt(process.env.PORT || "3000", 10);
 const hostname = process.env.HOSTNAME || "localhost";
@@ -14,9 +14,9 @@ app.prepare().then(() => {
   const io = new Server(httpServer);
   io.on("connection", (socket) => {
     console.log("User connected: ", socket.id);
-    socket.on("message", ({ message, room, sender }) => {
+    socket.on("message", ({ message, room, sender }: Message) => {
       console.log(`Message from ${sender} in room ${room}: ${message}`);
-
+      util.SomeUtil();
       socket.to(room).emit("message", { sender, message });
     });
     socket.on("join-room", ({ room, username }) => {

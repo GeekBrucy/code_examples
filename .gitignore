@@ -546,3 +546,5 @@ AWS/Certificates/ExamQuestions/*
 .cursorignore
 
 certs/
+
+dist/

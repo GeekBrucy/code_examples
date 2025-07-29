@@ -1,8 +1,16 @@
+using di_keyed_service.Services._01_Fundamental;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 
 builder.Services.AddControllers();
+builder.Services.AddKeyedTransient<IBasic, BasicService1>("Basic1");
+builder.Services.AddKeyedTransient<IBasic, BasicService2>("Basic2");
+
+// Also register as non-keyed for IEnumerable<IBasic> injection
+builder.Services.AddTransient<IBasic, BasicService1>();
+builder.Services.AddTransient<IBasic, BasicService2>();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 

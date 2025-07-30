@@ -1,6 +1,8 @@
 services:
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # image: mcr.microsoft.com/mssql/server:2022-latest
+    build:
+      dockerfile: ./Dockerfile
     container_name: sqlserver_ver_developer
     environment:
       - ACCEPT_EULA=Y

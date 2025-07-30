@@ -17,6 +17,13 @@ builder.Services.AddDbContext<MyDbContext>(opt =>
 
 var app = builder.Build();
 
+// Seed database
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<MyDbContext>();
+    SeedData.Initialize(context);
+}
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {

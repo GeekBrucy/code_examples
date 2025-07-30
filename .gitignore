@@ -548,3 +548,5 @@ AWS/Certificates/ExamQuestions/*
 certs/
 
 dist/
+
+docker_db_volume

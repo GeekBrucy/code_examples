@@ -1,0 +1,15 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver_ver_developer
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=Password1
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - ./docker_db_volume/data:/var/opt/mssql/data
+      - ./docker_db_volume/log:/var/opt/mssql/log
+      - ./docker_db_volume/secrets:/var/opt/mssql/secrets
+    restart: unless-stopped

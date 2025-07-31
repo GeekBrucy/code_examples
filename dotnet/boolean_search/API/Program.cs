@@ -1,4 +1,5 @@
 using API.Data;
+using API.Services.Search;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +15,8 @@ builder.Services.AddDbContext<MyDbContext>(opt =>
     var connStr = builder.Configuration.GetConnectionString("sqlserver");
     opt.UseSqlServer(connStr);
 });
+
+builder.Services.AddScoped<ISearchService, SearchService>();
 
 var app = builder.Build();
 

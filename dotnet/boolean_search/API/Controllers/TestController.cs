@@ -1,5 +1,6 @@
 using API.Data;
 using API.DTOs;
+using API.Services.Search;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,16 +10,16 @@ namespace API.Controllers
     [Route("api/[controller]")]
     public class TestController : ControllerBase
     {
-        private readonly MyDbContext _context;
-        public TestController(MyDbContext context)
+        private readonly ISearchService _searchService;
+        public TestController(ISearchService searchService)
         {
-            _context = context;
+            _searchService = searchService;
         }
         [HttpPost]
         public async Task<ActionResult<object>> FullTextQuery(FullTextPayload payload)
         {
-            var query = _context.SearchTargets
-            .Where(st => EF.Functions.Contains(st.Texts, payload.FreeText));
+            var query = _searchService.BuildQuery(payload);
+            if (query == null) return BadRequest("Invalid payload");
             return Ok(await query.ToListAsync());
         }
     }

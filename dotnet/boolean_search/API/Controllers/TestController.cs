@@ -20,7 +20,8 @@ namespace API.Controllers
         {
             var query = _searchService.BuildQuery(payload);
             if (query == null) return BadRequest("Invalid payload");
-            return Ok(await query.ToListAsync());
+            var ret = await query.ToListAsync();
+            return Ok(ret);
         }
     }
 }

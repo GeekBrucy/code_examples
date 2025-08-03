@@ -16,7 +16,7 @@ namespace API.Tests.Utils
 
         [Theory]
         [InlineData("apple", "Simple word")]
-        [InlineData("apple banana", "Multiple words")]
+        [InlineData("apple banana", "Multiple words (implicit AND)")]
         [InlineData("\"exact phrase\"", "Quoted phrase")]
         [InlineData("apple AND banana", "Basic AND")]
         [InlineData("apple OR banana", "Basic OR")]
@@ -108,11 +108,12 @@ namespace API.Tests.Utils
         }
 
         [Theory]
-        [InlineData("NOT apple", "NOT at beginning")]
-        [InlineData("apple NOT banana", "NOT without AND")]
-        [InlineData("apple OR NOT banana", "NOT after OR")]
         [InlineData("apple AND NOT", "NOT at end")]
+        [InlineData("apple NOT banana", "NOT without AND or OR")]
         [InlineData("apple NEAR NOT banana", "NOT after NEAR")]
+        [InlineData("apple OR NOT banana", "NOT after OR")]
+        [InlineData("NOT apple", "NOT at beginning")]
+        [InlineData("(NOT apple)", "NOT after parenthesis")]
         public void Validate_InvalidNotOperatorUsage_ShouldReturnFalse(string query, string description)
         {
             _output.WriteLine($"Testing: {description} - '{query}'");

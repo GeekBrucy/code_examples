@@ -70,11 +70,7 @@ namespace API.Utils
 
         private static bool IsValidContainsQuery(string input)
         {
-            // First separate parentheses from words for proper tokenization
-            var preprocessed = Regex.Replace(input, @"([()])", " $1 ");
-            var tokens = Regex.Split(preprocessed, @"\s+")
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .ToList();
+            var tokens = TokenizeQuery(input);
 
             for (int i = 0; i < tokens.Count; i++)
             {
@@ -106,14 +102,11 @@ namespace API.Utils
                     if (new[] { "AND", "OR", "NEAR", "NOT" }.Contains(prevUpper))
                         return false;
                         
-                    // Check next token is not also an operator (except NOT after AND)
+                    // Check next token is not also an operator (except NOT which can follow any binary operator)
                     if (i < tokens.Count - 1)
                     {
                         var nextUpper = tokens[i + 1].ToUpperInvariant();
                         if (new[] { "AND", "OR", "NEAR" }.Contains(nextUpper))
-                            return false;
-                        // NOT is only allowed after AND
-                        if (nextUpper == "NOT" && upper != "AND")
                             return false;
                     }
                 }
@@ -124,15 +117,12 @@ namespace API.Utils
                     // NOT cannot be first token
                     if (i == 0) return false;
                     
-                    // Cannot immediately follow opening parenthesis
-                    if (i > 0 && tokens[i - 1] == "(")
-                        return false;
-                    
-                    // NOT must be preceded by AND
-                    if (tokens[i - 1].ToUpperInvariant() != "AND") return false;
-                    
                     // NOT cannot be last token
                     if (i == tokens.Count - 1) return false;
+                    
+                    // NOT must be preceded by AND (cannot follow OR, NEAR, or be after opening parenthesis)
+                    if (tokens[i - 1].ToUpperInvariant() != "AND")
+                        return false;
                     
                     // NOT cannot be followed by another operator
                     var nextUpper = tokens[i + 1].ToUpperInvariant();
@@ -141,11 +131,59 @@ namespace API.Utils
                 }
             }
 
-            // Wildcards validation - more comprehensive
-            if (Regex.IsMatch(input, @"\*\w+")) return false; // wildcard at beginning
-            if (Regex.IsMatch(input, @"\w+\*+\w+")) return false; // wildcard in middle
+            // According to SQL Server CONTAINS documentation, multiple words are allowed
+            // They are treated as an implicit AND operation
+
+            // Wildcards validation - prefix terms (ending with *) are allowed
+            if (Regex.IsMatch(input, @"\*\w+")) return false; // wildcard at beginning not allowed
+            if (Regex.IsMatch(input, @"\w+\*+\w+")) return false; // wildcard in middle not allowed
+            // Note: wildcards at end (prefix terms) are allowed per CONTAINS documentation
 
             return true;
+        }
+        
+        
+        private static List<string> TokenizeQuery(string input)
+        {
+            var tokens = new List<string>();
+            var i = 0;
+            
+            while (i < input.Length)
+            {
+                // Skip whitespace
+                while (i < input.Length && char.IsWhiteSpace(input[i]))
+                    i++;
+                    
+                if (i >= input.Length) break;
+                
+                // Handle quoted phrases
+                if (input[i] == '"')
+                {
+                    var start = i;
+                    i++; // Skip opening quote
+                    while (i < input.Length && input[i] != '"')
+                        i++;
+                    if (i < input.Length) i++; // Skip closing quote
+                    tokens.Add(input.Substring(start, i - start));
+                }
+                // Handle parentheses
+                else if (input[i] == '(' || input[i] == ')')
+                {
+                    tokens.Add(input[i].ToString());
+                    i++;
+                }
+                // Handle regular words
+                else
+                {
+                    var start = i;
+                    while (i < input.Length && !char.IsWhiteSpace(input[i]) && input[i] != '(' && input[i] != ')' && input[i] != '"')
+                        i++;
+                    if (i > start)
+                        tokens.Add(input.Substring(start, i - start));
+                }
+            }
+            
+            return tokens;
         }
     }
 }

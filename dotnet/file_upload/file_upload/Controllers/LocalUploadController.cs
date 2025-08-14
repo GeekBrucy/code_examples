@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using MimeMapping;
 
 namespace file_upload.Controllers
 {
@@ -151,6 +152,36 @@ namespace file_upload.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error deleting file: {ex.Message}");
+            }
+        }
+
+        [HttpGet("download/storage/{fileName}")]
+        public IActionResult DownloadFileFromStorage(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName))
+            {
+                return BadRequest("File name is required");
+            }
+
+            var uploadsFolder = Path.Combine(_environment.ContentRootPath, "uploads");
+            var filePath = Path.Combine(uploadsFolder, fileName);
+
+            if (!System.IO.File.Exists(filePath))
+            {
+                return NotFound("File not found");
+            }
+
+            try
+            {
+                var fileBytes = System.IO.File.ReadAllBytes(filePath);
+                var contentType = MimeUtility.GetMimeMapping(fileName);
+                var originalFileName = fileName.Contains('_') ? fileName.Substring(fileName.IndexOf('_') + 1) : fileName;
+                
+                return File(fileBytes, contentType, originalFileName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error downloading file: {ex.Message}");
             }
         }
     }

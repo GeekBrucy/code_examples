@@ -1,0 +1,49 @@
+### Create shared resource updates from different sources
+POST http://localhost:5000/api/testdata/create-sample-update?source=system&type=maintenance_alert&priority=1
+
+### Create normal priority update from API
+POST http://localhost:5000/api/testdata/create-sample-update?source=api&type=data_update&priority=0
+
+### Create high priority update from external service  
+POST http://localhost:5000/api/testdata/create-sample-update?source=external_service&type=critical_alert&priority=2
+
+### Test event-based polling - user1 first call (gets all updates)
+GET http://localhost:5000/api/polling/updates?userId=user1
+
+### Test event-based polling - user2 first call (gets all updates)  
+GET http://localhost:5000/api/polling/updates?userId=user2
+
+### UPDATE EXISTING RECORD (this is the key test!)
+# Replace the record ID with an actual ID from the previous responses
+PUT http://localhost:5000/api/update/some-guid-from-previous-response
+Content-Type: application/json
+
+{
+  "content": {
+    "message": "This record has been UPDATED!",
+    "updatedBy": "admin",
+    "version": 2
+  },
+  "priority": 3
+}
+
+### Test event-based polling after update - user1 (should see the UPDATED record)
+GET http://localhost:5000/api/polling/updates?userId=user1
+
+### Test event-based polling after update - user2 (should also see the UPDATED record)
+GET http://localhost:5000/api/polling/updates?userId=user2
+
+### Create new update after the modification
+POST http://localhost:5000/api/testdata/create-sample-update?source=background_job&type=status_update&priority=0
+
+### Test cursor continuation - user1 with cursor from previous response
+GET http://localhost:5000/api/polling/updates?userId=user1&cursor=5
+
+### Test explicit cursor - get updates after event sequence 2
+GET http://localhost:5000/api/polling/updates?userId=user3&cursor=2
+
+### Test with timestamp fallback - should convert timestamp to event sequence
+GET http://localhost:5000/api/polling/updates?userId=user4&lastSync=2025-08-14T10:00:00Z
+
+### Test polling endpoint - missing userId (should return 400)
+GET http://localhost:5000/api/polling/updates

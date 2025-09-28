@@ -33,9 +33,9 @@ namespace file_upload.Controllers
                 return BadRequest("File type not allowed");
             }
 
-            if (file.Length > 10 * 1024 * 1024) // 10MB limit
+            if (file.Length > 100 * 1024 * 1024) // 100MB limit
             {
-                return BadRequest("File size exceeds 10MB limit");
+                return BadRequest("File size exceeds 100MB limit");
             }
 
             try

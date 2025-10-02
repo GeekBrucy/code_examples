@@ -1,16 +1,17 @@
 /* =======================
    Settings
    ======================= */
-DECLARE @Suffix          sysname = N'_ToDelete';    -- the temp/staging suffix
-DECLARE @SummarySchema   sysname = N'dbo';          -- summary table schema
-DECLARE @SummaryBaseName sysname = N'SyncSummary';  -- final name = SyncSummary + Suffix
+DECLARE @Suffix          sysname = N'_ToDelete';    -- your staging/temp suffix
+DECLARE @SummarySchema   sysname = N'dbo';
+DECLARE @SummaryBaseName sysname = N'SyncSummary';  -- final table name = SyncSummary + Suffix
 
 /* =======================
-   Create summary table
+   Create final summary table (with suffix)
    ======================= */
-DECLARE @SummaryTableQuoted nvarchar(300) = QUOTENAME(@SummarySchema) + N'.' + QUOTENAME(@SummaryBaseName + @Suffix);
+DECLARE @SummaryTableQuoted nvarchar(300) =
+    QUOTENAME(@SummarySchema) + N'.' + QUOTENAME(@SummaryBaseName + @Suffix);
 
-IF OBJECT_ID(@SummaryTableQuoted) IS NOT NULL
+IF OBJECT_ID(@SummaryTableQuoted, 'U') IS NOT NULL
     EXEC(N'DROP TABLE ' + @SummaryTableQuoted + N';');
 
 EXEC(N'
@@ -21,11 +22,17 @@ CREATE TABLE ' + @SummaryTableQuoted + N'(
     BaseRows    int            NULL,
     SrcRows     int            NULL,
     CountEqual  bit            NOT NULL,
-    ExactMatch  bit            NOT NULL,  -- exact set match over compared columns
+    ExactMatch  bit            NOT NULL,  -- exact set equality over compared columns
     BaseMinus   int            NULL,      -- rows only in base
     SrcMinus    int            NULL,      -- rows only in source
     DiffQuery   nvarchar(max)  NULL       -- runnable SQL to list diffs
 );');
+
+/* Pre-build the dynamic insert into the final summary table */
+DECLARE @InsertRowSql nvarchar(max) = N'
+INSERT INTO ' + @SummaryTableQuoted + N'
+ (SchemaName, BaseTable, SrcTable, BaseRows, SrcRows, CountEqual, ExactMatch, BaseMinus, SrcMinus, DiffQuery)
+VALUES (@pSchema, @pBase, @pSrc, @pBC, @pSC, @pCntEq, @pExact, @pBms, @pSmb, @pDiff);';
 
 /* =======================
    Loop tables that end with @Suffix
@@ -34,6 +41,7 @@ DECLARE @Schema sysname, @Src sysname, @Base sysname;
 DECLARE @Cols nvarchar(max), @sql nvarchar(max);
 DECLARE @bc int, @sc int, @bms int, @smb int;
 DECLARE @DiffQuery nvarchar(max);
+DECLARE @CntEq bit, @Exact bit;
 
 DECLARE cur CURSOR LOCAL FAST_FORWARD FOR
 SELECT TABLE_SCHEMA,
@@ -47,23 +55,24 @@ FETCH NEXT FROM cur INTO @Schema, @Src, @Base;
 
 WHILE @@FETCH_STATUS = 0
 BEGIN
-    /* base table must exist to compare */
-    IF OBJECT_ID(QUOTENAME(@Schema) + '.' + QUOTENAME(@Base)) IS NULL
+    /* If base table missing, record and continue */
+    IF OBJECT_ID(QUOTENAME(@Schema) + '.' + QUOTENAME(@Base), 'U') IS NULL
     BEGIN
         SET @bc = NULL; SET @sc = NULL; SET @bms = NULL; SET @smb = NULL;
+        SET @CntEq = 0; SET @Exact = 0;
         SET @DiffQuery = N'/* Base table not found: ' + @Schema + N'.' + @Base + N' */';
 
         EXEC sp_executesql
-            N'INSERT INTO ' + @SummaryTableQuoted + N'
-              (SchemaName, BaseTable, SrcTable, BaseRows, SrcRows, CountEqual, ExactMatch, BaseMinus, SrcMinus, DiffQuery)
-              VALUES(@p1, @p2, @p3, @p4, @p5, 0, 0, @p6, @p7, @p8);',
-            N'@p1 nvarchar(128), @p2 nvarchar(128), @p3 nvarchar(128), @p4 int, @p5 int, @p6 int, @p7 int, @p8 nvarchar(max)',
-            @p1=@Schema, @p2=@Base, @p3=@Src, @p4=@bc, @p5=@sc, @p6=@bms, @p7=@smb, @p8=@DiffQuery;
+            @InsertRowSql,
+            N'@pSchema nvarchar(128), @pBase nvarchar(128), @pSrc nvarchar(128),
+              @pBC int, @pSC int, @pCntEq bit, @pExact bit, @pBms int, @pSmb int, @pDiff nvarchar(max)',
+            @pSchema=@Schema, @pBase=@Base, @pSrc=@Src,
+            @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=@bms, @pSmb=@smb, @pDiff=@DiffQuery;
 
         GOTO NextTable;
     END
 
-    /* Build list of common comparable columns (exclude computed & rowversion) */
+    /* Build common comparable columns (exclude computed & rowversion) */
     ;WITH basecols AS (
         SELECT c.name, c.column_id
         FROM sys.columns c
@@ -84,30 +93,31 @@ BEGIN
     SELECT @Cols = STRING_AGG(QUOTENAME(name), ', ') WITHIN GROUP (ORDER BY column_id)
     FROM common;
 
-    /* If no comparable columns, record non-match (with a hint) */
+    /* If no comparable columns, store rowcounts only and a hint */
     IF @Cols IS NULL OR @Cols = N''
     BEGIN
-        -- just rowcounts for info
-        DECLARE @cntSql nvarchar(max) = N'
+        SET @sql = N'
             SELECT @bc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N';
             SELECT @sc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N';';
-        EXEC sp_executesql @cntSql, N'@bc int OUTPUT, @sc int OUTPUT', @bc=@bc OUTPUT, @sc=@sc OUTPUT;
+        EXEC sp_executesql @sql, N'@bc int OUTPUT, @sc int OUTPUT', @bc=@bc OUTPUT, @sc=@sc OUTPUT;
 
+        SET @CntEq = CASE WHEN @bc = @sc THEN 1 ELSE 0 END;
+        SET @Exact = 0;
         SET @bms = NULL; SET @smb = NULL;
         SET @DiffQuery = N'/* No common comparable columns between ' + @Schema + N'.' + @Base +
                          N' and ' + @Schema + N'.' + @Src + N'. Check schema differences. */';
 
         EXEC sp_executesql
-            N'INSERT INTO ' + @SummaryTableQuoted + N'
-              (SchemaName, BaseTable, SrcTable, BaseRows, SrcRows, CountEqual, ExactMatch, BaseMinus, SrcMinus, DiffQuery)
-              VALUES(@p1, @p2, @p3, @p4, @p5, 0, 0, @p6, @p7, @p8);',
-            N'@p1 nvarchar(128), @p2 nvarchar(128), @p3 nvarchar(128), @p4 int, @p5 int, @p6 int, @p7 int, @p8 nvarchar(max)',
-            @p1=@Schema, @p2=@Base, @p3=@Src, @p4=@bc, @p5=@sc, @p6=@bms, @p7=@smb, @p8=@DiffQuery;
+            @InsertRowSql,
+            N'@pSchema nvarchar(128), @pBase nvarchar(128), @pSrc nvarchar(128),
+              @pBC int, @pSC int, @pCntEq bit, @pExact bit, @pBms int, @pSmb int, @pDiff nvarchar(max)',
+            @pSchema=@Schema, @pBase=@Base, @pSrc=@Src,
+            @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=@bms, @pSmb=@smb, @pDiff=@DiffQuery;
 
         GOTO NextTable;
     END
 
-    /* Rowcounts + EXCEPT in both directions */
+    /* Rowcounts + EXCEPT both ways */
     SET @sql = N'
         SELECT @bc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N';
         SELECT @sc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N';
@@ -121,19 +131,20 @@ BEGIN
             EXCEPT
             SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N'
         ) Y;';
-
     EXEC sp_executesql
         @sql,
         N'@bc int OUTPUT, @sc int OUTPUT, @bms int OUTPUT, @smb int OUTPUT',
         @bc=@bc OUTPUT, @sc=@sc OUTPUT, @bms=@bms OUTPUT, @smb=@smb OUTPUT;
 
-    /* Build runnable diff query if needed */
-    IF ISNULL(@bms,0) = 0 AND ISNULL(@smb,0) = 0
+    /* Build diff query text (only if there are diffs) */
+    IF ISNULL(@bms,0)=0 AND ISNULL(@smb,0)=0
     BEGIN
-        SET @DiffQuery = NULL; -- exact match
+        SET @DiffQuery = NULL;
+        SET @Exact = 1;
     END
     ELSE
     BEGIN
+        SET @Exact = 0;
         SET @DiffQuery = N'
 /* Differences for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' */
 SELECT ''BASE_MINUS'' AS side, * FROM (
@@ -149,29 +160,28 @@ SELECT ''SRC_MINUS'' AS side, * FROM (
 ) d;';
     END
 
-    /* Insert summary row */
+    SET @CntEq = CASE WHEN @bc = @sc THEN 1 ELSE 0 END;
+
+    /* Insert summary row into the final table */
     EXEC sp_executesql
-        N'INSERT INTO ' + @SummaryTableQuoted + N'
-          (SchemaName, BaseTable, SrcTable, BaseRows, SrcRows, CountEqual, ExactMatch, BaseMinus, SrcMinus, DiffQuery)
-          VALUES(@p1, @p2, @p3, @p4, @p5,
-                 CASE WHEN @p4 = @p5 THEN 1 ELSE 0 END,
-                 CASE WHEN ISNULL(@p6,0)=0 AND ISNULL(@p7,0)=0 THEN 1 ELSE 0 END,
-                 @p6, @p7, @p8);',
-        N'@p1 nvarchar(128), @p2 nvarchar(128), @p3 nvarchar(128), @p4 int, @p5 int, @p6 int, @p7 int, @p8 nvarchar(max)',
-        @p1=@Schema, @p2=@Base, @p3=@Src, @p4=@bc, @p5=@sc, @p6=@bms, @p7=@smb, @p8=@DiffQuery;
+        @InsertRowSql,
+        N'@pSchema nvarchar(128), @pBase nvarchar(128), @pSrc nvarchar(128),
+          @pBC int, @pSC int, @pCntEq bit, @pExact bit, @pBms int, @pSmb int, @pDiff nvarchar(max)',
+        @pSchema=@Schema, @pBase=@Base, @pSrc=@Src,
+        @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=@bms, @pSmb=@smb, @pDiff=@DiffQuery;
 
     NextTable:
     FETCH NEXT FROM cur INTO @Schema, @Src, @Base;
 END
 
-CLOSE cur; DEALLOCATE cur;
+CLOSE cur;
+DEALLOCATE cur;
 
 /* =======================
    Show results
    ======================= */
-DECLARE @show nvarchar(max) =
-    N'SELECT * FROM ' + @SummaryTableQuoted + N'
-      ORDER BY ExactMatch DESC, CountEqual DESC, SchemaName, BaseTable;';
+DECLARE @show nvarchar(max) = N'SELECT * FROM ' + @SummaryTableQuoted + N'
+ORDER BY ExactMatch DESC, CountEqual DESC, SchemaName, BaseTable;';
 EXEC(@show);
 
-PRINT N'→ Summary written to ' + @SummaryTableQuoted + N'. Copy the DiffQuery text and run it to see differing rows.';
+PRINT N'→ Summary written to ' + @SummaryTableQuoted + N'. Copy the DiffQuery text for any row with ExactMatch = 0 to see differences.';

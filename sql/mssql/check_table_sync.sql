@@ -1,11 +1,11 @@
 /* =======================
    Settings
    ======================= */
-DECLARE @Suffix            sysname       = N'_ToDelete';     -- staging/temp suffix for source tables
+DECLARE @Suffix            sysname       = N'_ToDelete';       -- staging/temp suffix for source tables
 DECLARE @SummarySchema     sysname       = N'dbo';
-DECLARE @SummaryBaseName   sysname       = N'SyncSummary';   -- final = SyncSummary + Suffix
-DECLARE @GlobalColsCSV     nvarchar(max) = N'Id,Code,Name';  -- REQUIRED: columns to compare (same list for all tables)
-DECLARE @StrictColumns     bit           = 1;                -- 1 = require ALL listed columns exist in BOTH tables; 0 = compare intersection only
+DECLARE @SummaryBaseName   sysname       = N'SyncSummary';     -- final = SyncSummary + Suffix
+DECLARE @GlobalColsCSV     nvarchar(max) = N'Id,Name,Sequence';-- REQUIRED: only these columns compared
+DECLARE @StrictColumns     bit           = 1;                  -- 1=require ALL listed columns exist in BOTH tables
 
 /* =======================
    Create final summary table (with suffix)
@@ -36,9 +36,9 @@ INSERT INTO ' + @SummaryTableQuoted + N'
 VALUES (@pSchema, @pBase, @pSrc, @pBC, @pSC, @pCntEq, @pExact, @pBms, @pSmb, @pDiff);';
 
 /* =======================
-   Prep: normalize/de-dup requested column names
+   Prep: normalize/de-dup requested column names (Id, Name, Sequence)
    ======================= */
-DECLARE @Wanted TABLE (name sysname PRIMARY KEY);
+DECLARE @Wanted TABLE (name sysname);  -- no PK to avoid dup insert errors
 INSERT INTO @Wanted(name)
 SELECT DISTINCT LTRIM(RTRIM(value))
 FROM STRING_SPLIT(@GlobalColsCSV, N',')
@@ -95,7 +95,7 @@ BEGIN
     END
 
     /* Discover which requested columns exist in BOTH tables (exclude computed/rowversion from base) */
-    DECLARE @colsTable TABLE(name sysname PRIMARY KEY, ord int);
+    DECLARE @colsTable TABLE(name sysname, ord int);  -- no PK here
 
     ;WITH basecols AS (
         SELECT c.name, c.column_id
@@ -116,19 +116,16 @@ BEGIN
         INNER JOIN @Wanted  w ON w.name = b.name
     )
     INSERT INTO @colsTable(name, ord)
-    SELECT name, MIN(column_id) FROM both GROUP BY name;
+    SELECT DISTINCT name, MIN(column_id) OVER (PARTITION BY name)
+    FROM both;
 
     /* Strict-mode check: if any requested column missing in either table, record and skip compare */
     IF @StrictColumns = 1
     BEGIN
         DECLARE @missing nvarchar(max);
 
-        ;WITH allreq AS (
-            SELECT name FROM @Wanted
-        ),
-        have AS (
-            SELECT name FROM @colsTable
-        )
+        ;WITH allreq AS (SELECT name FROM @Wanted),
+             have  AS (SELECT name FROM @colsTable)
         SELECT @missing = STUFF((
             SELECT N', ' + QUOTENAME(r.name)
             FROM allreq r
@@ -139,7 +136,7 @@ BEGIN
 
         IF @missing IS NOT NULL AND @missing <> N''
         BEGIN
-            -- Rowcounts (helpful)
+            -- Rowcounts (for context)
             SET @sql = N'
                 SELECT @bc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N';
                 SELECT @sc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N';';
@@ -161,7 +158,7 @@ BEGIN
         END
     END
 
-    /* Build comma-separated QUOTENAME list for the EXISTING requested columns */
+    /* Build comma-separated QUOTENAME list for the existing requested columns */
     SELECT @Cols = STUFF((
         SELECT N', ' + QUOTENAME(t.name)
         FROM @colsTable t
@@ -185,7 +182,7 @@ BEGIN
         GOTO NextTable;
     END
 
-    /* Rowcounts + EXCEPT both ways */
+    /* Rowcounts + EXCEPT both ways (only Id,Name,Sequence) */
     SET @sql = N'
         SELECT @bc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N';
         SELECT @sc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N';
@@ -214,7 +211,7 @@ BEGIN
     BEGIN
         SET @Exact = 0;
         SET @DiffQuery = N'
-/* Differences for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' (requested columns only) */
+/* Differences for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' (Id,Name,Sequence only) */
 SELECT ''BASE_MINUS'' AS side, * FROM (
     SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N'
     EXCEPT

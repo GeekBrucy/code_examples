@@ -77,10 +77,13 @@ BEGIN
         GOTO NextTable;
     END
 
-    /* Build list of columns to compare
+    /* Build list of columns to compare:
        1) common between base & source, excluding computed/rowversion
        2) if @GlobalColsCSV provided, keep only those that exist
+       Uses FOR XML PATH to avoid STRING_AGG dependency.
     */
+    DECLARE @colsTable TABLE(name sysname, column_id int);
+
     ;WITH basecols AS (
         SELECT c.name, c.column_id
         FROM sys.columns c
@@ -97,19 +100,24 @@ BEGIN
         SELECT b.name, b.column_id
         FROM basecols b
         INNER JOIN srccols s ON s.name = b.name
-    ),
-    filtered AS (
-        SELECT c.name, c.column_id
-        FROM common c
-        WHERE (NULLIF(LTRIM(RTRIM(@GlobalColsCSV)), N'') IS NULL)
-           OR EXISTS (
-                SELECT 1
-                FROM STRING_SPLIT(@GlobalColsCSV, N',') ss
-                WHERE LTRIM(RTRIM(ss.value)) = c.name
-           )
     )
-    SELECT @Cols = STRING_AGG(QUOTENAME(name), N', ') WITHIN GROUP (ORDER BY column_id)
-    FROM filtered;
+    INSERT INTO @colsTable(name, column_id)
+    SELECT c.name, c.column_id
+    FROM common c
+    WHERE (NULLIF(LTRIM(RTRIM(@GlobalColsCSV)), N'') IS NULL)
+       OR EXISTS (
+            SELECT 1
+            FROM STRING_SPLIT(@GlobalColsCSV, N',') ss
+            WHERE LTRIM(RTRIM(ss.value)) = c.name
+       );
+
+    -- Build comma-separated QUOTENAME list into @Cols (ordered by column_id)
+    SELECT @Cols = STUFF((
+        SELECT N', ' + QUOTENAME(t.name)
+        FROM @colsTable t
+        ORDER BY t.column_id
+        FOR XML PATH(''), TYPE
+    ).value('.', 'nvarchar(max)'), 1, 2, N'');
 
     /* If no comparable columns */
     IF @Cols IS NULL OR @Cols = N''
@@ -119,7 +127,7 @@ BEGIN
             SELECT @sc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N';';
         EXEC sp_executesql @sql, N'@bc int OUTPUT, @sc int OUTPUT', @bc=@bc OUTPUT, @sc=@sc OUTPUT;
 
-        SET @CntEq = IIF(@bc=@sc, 1, 0);
+        SET @CntEq = CASE WHEN @bc=@sc THEN 1 ELSE 0 END;
         SET @Exact = 0;
         SET @bms = NULL; SET @smb = NULL;
         SET @DiffQuery = N'/* No comparable columns for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' */';
@@ -177,7 +185,7 @@ SELECT ''SRC_MINUS'' AS side, * FROM (
 ) d;';
     END
 
-    SET @CntEq = IIF(@bc=@sc, 1, 0);
+    SET @CntEq = CASE WHEN @bc=@sc THEN 1 ELSE 0 END;
 
     EXEC sp_executesql
         @InsertRowSql,

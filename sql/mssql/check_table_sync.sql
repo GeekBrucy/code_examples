@@ -1,14 +1,11 @@
 /* =======================
    Settings
    ======================= */
-DECLARE @Suffix          sysname       = N'_ToDelete';   -- staging/temp suffix
-DECLARE @SummarySchema   sysname       = N'dbo';
-DECLARE @SummaryBaseName sysname       = N'SyncSummary'; -- final = SyncSummary + Suffix
-
--- Global columns to compare for ALL tables.
--- If NULL/empty => compare ALL common non-computed, non-rowversion columns.
-DECLARE @GlobalColsCSV   nvarchar(max) = N'Id,Code,Name';  -- e.g. N'Id,Code,Name' or NULL
-
+DECLARE @Suffix            sysname       = N'_ToDelete';     -- staging/temp suffix for source tables
+DECLARE @SummarySchema     sysname       = N'dbo';
+DECLARE @SummaryBaseName   sysname       = N'SyncSummary';   -- final = SyncSummary + Suffix
+DECLARE @GlobalColsCSV     nvarchar(max) = N'Id,Code,Name';  -- REQUIRED: columns to compare (same list for all tables)
+DECLARE @StrictColumns     bit           = 1;                -- 1 = require ALL listed columns exist in BOTH tables; 0 = compare intersection only
 
 /* =======================
    Create final summary table (with suffix)
@@ -38,9 +35,23 @@ INSERT INTO ' + @SummaryTableQuoted + N'
  (SchemaName, BaseTable, SrcTable, BaseRows, SrcRows, CountEqual, ExactMatch, BaseMinus, SrcMinus, DiffQuery)
 VALUES (@pSchema, @pBase, @pSrc, @pBC, @pSC, @pCntEq, @pExact, @pBms, @pSmb, @pDiff);';
 
+/* =======================
+   Prep: normalize/de-dup requested column names
+   ======================= */
+DECLARE @Wanted TABLE (name sysname PRIMARY KEY);
+INSERT INTO @Wanted(name)
+SELECT DISTINCT LTRIM(RTRIM(value))
+FROM STRING_SPLIT(@GlobalColsCSV, N',')
+WHERE NULLIF(LTRIM(RTRIM(value)), N'') IS NOT NULL;
+
+IF NOT EXISTS(SELECT 1 FROM @Wanted)
+BEGIN
+    RAISERROR('Global column list (@GlobalColsCSV) is empty. Provide at least one column.', 16, 1);
+    RETURN;
+END
 
 /* =======================
-   Loop suffixed tables
+   Loop suffixed tables (exclude summary table itself)
    ======================= */
 DECLARE @Schema sysname, @Src sysname, @Base sysname;
 DECLARE @Cols nvarchar(max), @sql nvarchar(max);
@@ -48,12 +59,18 @@ DECLARE @bc int, @sc int, @bms int, @smb int;
 DECLARE @DiffQuery nvarchar(max);
 DECLARE @CntEq bit, @Exact bit;
 
+DECLARE @SuffixLen int = LEN(@Suffix);
+
 DECLARE cur CURSOR LOCAL FAST_FORWARD FOR
 SELECT TABLE_SCHEMA,
        TABLE_NAME,
-       LEFT(TABLE_NAME, LEN(TABLE_NAME) - LEN(@Suffix)) AS BaseTable
+       LEFT(TABLE_NAME, LEN(TABLE_NAME) - @SuffixLen) AS BaseTable
 FROM INFORMATION_SCHEMA.TABLES
-WHERE RIGHT(TABLE_NAME, LEN(@Suffix)) = @Suffix;
+WHERE RIGHT(TABLE_NAME, @SuffixLen) = @Suffix
+  AND NOT (
+        TABLE_SCHEMA = @SummarySchema
+    AND LEFT(TABLE_NAME, LEN(TABLE_NAME) - @SuffixLen) = @SummaryBaseName
+  );
 
 OPEN cur;
 FETCH NEXT FROM cur INTO @Schema, @Src, @Base;
@@ -77,12 +94,8 @@ BEGIN
         GOTO NextTable;
     END
 
-    /* Build list of columns to compare:
-       1) common between base & source, excluding computed/rowversion
-       2) if @GlobalColsCSV provided, keep only those that exist
-       Uses FOR XML PATH to avoid STRING_AGG dependency.
-    */
-    DECLARE @colsTable TABLE(name sysname, column_id int);
+    /* Discover which requested columns exist in BOTH tables (exclude computed/rowversion from base) */
+    DECLARE @colsTable TABLE(name sysname PRIMARY KEY, ord int);
 
     ;WITH basecols AS (
         SELECT c.name, c.column_id
@@ -96,48 +109,78 @@ BEGIN
         FROM sys.columns c
         WHERE c.[object_id] = OBJECT_ID(QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src))
     ),
-    common AS (
+    both AS (
         SELECT b.name, b.column_id
         FROM basecols b
         INNER JOIN srccols s ON s.name = b.name
+        INNER JOIN @Wanted  w ON w.name = b.name
     )
-    INSERT INTO @colsTable(name, column_id)
-    SELECT c.name, c.column_id
-    FROM common c
-    WHERE (NULLIF(LTRIM(RTRIM(@GlobalColsCSV)), N'') IS NULL)
-       OR EXISTS (
-            SELECT 1
-            FROM STRING_SPLIT(@GlobalColsCSV, N',') ss
-            WHERE LTRIM(RTRIM(ss.value)) = c.name
-       );
+    INSERT INTO @colsTable(name, ord)
+    SELECT name, MIN(column_id) FROM both GROUP BY name;
 
-    -- Build comma-separated QUOTENAME list into @Cols (ordered by column_id)
+    /* Strict-mode check: if any requested column missing in either table, record and skip compare */
+    IF @StrictColumns = 1
+    BEGIN
+        DECLARE @missing nvarchar(max);
+
+        ;WITH allreq AS (
+            SELECT name FROM @Wanted
+        ),
+        have AS (
+            SELECT name FROM @colsTable
+        )
+        SELECT @missing = STUFF((
+            SELECT N', ' + QUOTENAME(r.name)
+            FROM allreq r
+            WHERE NOT EXISTS (SELECT 1 FROM have h WHERE h.name = r.name)
+            ORDER BY r.name
+            FOR XML PATH(''), TYPE
+        ).value('.', 'nvarchar(max)'), 1, 2, N'');
+
+        IF @missing IS NOT NULL AND @missing <> N''
+        BEGIN
+            -- Rowcounts (helpful)
+            SET @sql = N'
+                SELECT @bc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N';
+                SELECT @sc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N';';
+            EXEC sp_executesql @sql, N'@bc int OUTPUT, @sc int OUTPUT', @bc=@bc OUTPUT, @sc=@sc OUTPUT;
+
+            SET @CntEq = CASE WHEN @bc=@sc THEN 1 ELSE 0 END;
+            SET @Exact = 0;
+            SET @bms = NULL; SET @smb = NULL;
+            SET @DiffQuery = N'/* Missing requested columns in one or both tables: ' + @missing + N' */';
+
+            EXEC sp_executesql
+                @InsertRowSql,
+                N'@pSchema nvarchar(128), @pBase nvarchar(128), @pSrc nvarchar(128),
+                  @pBC int, @pSC int, @pCntEq bit, @pExact bit, @pBms int, @pSmb int, @pDiff nvarchar(max)',
+                @pSchema=@Schema, @pBase=@Base, @pSrc=@Src,
+                @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=@bms, @pSmb=@smb, @pDiff=@DiffQuery;
+
+            GOTO NextTable;
+        END
+    END
+
+    /* Build comma-separated QUOTENAME list for the EXISTING requested columns */
     SELECT @Cols = STUFF((
         SELECT N', ' + QUOTENAME(t.name)
         FROM @colsTable t
-        ORDER BY t.column_id
+        ORDER BY t.ord, t.name
         FOR XML PATH(''), TYPE
     ).value('.', 'nvarchar(max)'), 1, 2, N'');
 
-    /* If no comparable columns */
+    /* If nothing to compare (shouldn't happen in strict mode) */
     IF @Cols IS NULL OR @Cols = N''
     BEGIN
-        SET @sql = N'
-            SELECT @bc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N';
-            SELECT @sc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N';';
-        EXEC sp_executesql @sql, N'@bc int OUTPUT, @sc int OUTPUT', @bc=@bc OUTPUT, @sc=@sc OUTPUT;
-
-        SET @CntEq = CASE WHEN @bc=@sc THEN 1 ELSE 0 END;
-        SET @Exact = 0;
-        SET @bms = NULL; SET @smb = NULL;
-        SET @DiffQuery = N'/* No comparable columns for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' */';
+        SET @bc = NULL; SET @sc = NULL; SET @CntEq = 0; SET @Exact = 0;
+        SET @DiffQuery = N'/* No overlapping requested columns to compare */';
 
         EXEC sp_executesql
             @InsertRowSql,
             N'@pSchema nvarchar(128), @pBase nvarchar(128), @pSrc nvarchar(128),
               @pBC int, @pSC int, @pCntEq bit, @pExact bit, @pBms int, @pSmb int, @pDiff nvarchar(max)',
             @pSchema=@Schema, @pBase=@Base, @pSrc=@Src,
-            @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=@bms, @pSmb=@smb, @pDiff=@DiffQuery;
+            @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=NULL, @pSmb=NULL, @pDiff=@DiffQuery;
 
         GOTO NextTable;
     END
@@ -161,7 +204,7 @@ BEGIN
         N'@bc int OUTPUT, @sc int OUTPUT, @bms int OUTPUT, @smb int OUTPUT',
         @bc=@bc OUTPUT, @sc=@sc OUTPUT, @bms=@bms OUTPUT, @smb=@smb OUTPUT;
 
-    /* Build DiffQuery if needed */
+    /* DiffQuery text (only when different) */
     IF ISNULL(@bms,0)=0 AND ISNULL(@smb,0)=0
     BEGIN
         SET @Exact = 1;
@@ -171,7 +214,7 @@ BEGIN
     BEGIN
         SET @Exact = 0;
         SET @DiffQuery = N'
-/* Differences for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' */
+/* Differences for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' (requested columns only) */
 SELECT ''BASE_MINUS'' AS side, * FROM (
     SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N'
     EXCEPT
@@ -209,4 +252,5 @@ DECLARE @show nvarchar(max) = N'SELECT * FROM ' + @SummaryTableQuoted + N'
 ORDER BY ExactMatch DESC, CountEqual DESC, SchemaName, BaseTable;';
 EXEC(@show);
 
-PRINT N'→ Summary written to ' + @SummaryTableQuoted + N'. Copy DiffQuery for rows with ExactMatch=0 to see differences.';
+PRINT N'→ Summary written to ' + @SummaryTableQuoted + N'. (Strict mode=' + CAST(@StrictColumns AS nvarchar(1)) +
+      N') Copy DiffQuery for rows with ExactMatch=0 to see differences.';

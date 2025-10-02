@@ -1,12 +1,17 @@
 /* =======================
    Settings
    ======================= */
-DECLARE @Suffix          sysname = N'_ToDelete';    -- your staging/temp suffix
+DECLARE @Suffix          sysname = N'_ToDelete';     -- staging/temp suffix
 DECLARE @SummarySchema   sysname = N'dbo';
-DECLARE @SummaryBaseName sysname = N'SyncSummary';  -- final table name = SyncSummary + Suffix
+DECLARE @SummaryBaseName sysname = N'SyncSummary';   -- final summary table = SyncSummary + Suffix
+
+-- Global columns to compare for ALL tables (no per-table config).
+-- If NULL or empty, compare ALL common non-computed, non-rowversion columns.
+DECLARE @GlobalColsCSV   nvarchar(max) = N'Id,Code,Name';   -- e.g. N'Id,Code,Name' or NULL
+
 
 /* =======================
-   Create final summary table (with suffix)
+   Create summary table (with suffix)
    ======================= */
 DECLARE @SummaryTableQuoted nvarchar(300) =
     QUOTENAME(@SummarySchema) + N'.' + QUOTENAME(@SummaryBaseName + @Suffix);
@@ -22,20 +27,20 @@ CREATE TABLE ' + @SummaryTableQuoted + N'(
     BaseRows    int            NULL,
     SrcRows     int            NULL,
     CountEqual  bit            NOT NULL,
-    ExactMatch  bit            NOT NULL,  -- exact set equality over compared columns
-    BaseMinus   int            NULL,      -- rows only in base
-    SrcMinus    int            NULL,      -- rows only in source
-    DiffQuery   nvarchar(max)  NULL       -- runnable SQL to list diffs
+    ExactMatch  bit            NOT NULL,
+    BaseMinus   int            NULL,
+    SrcMinus    int            NULL,
+    DiffQuery   nvarchar(max)  NULL
 );');
 
-/* Pre-build the dynamic insert into the final summary table */
 DECLARE @InsertRowSql nvarchar(max) = N'
 INSERT INTO ' + @SummaryTableQuoted + N'
  (SchemaName, BaseTable, SrcTable, BaseRows, SrcRows, CountEqual, ExactMatch, BaseMinus, SrcMinus, DiffQuery)
 VALUES (@pSchema, @pBase, @pSrc, @pBC, @pSC, @pCntEq, @pExact, @pBms, @pSmb, @pDiff);';
 
+
 /* =======================
-   Loop tables that end with @Suffix
+   Loop suffixed tables
    ======================= */
 DECLARE @Schema sysname, @Src sysname, @Base sysname;
 DECLARE @Cols nvarchar(max), @sql nvarchar(max);
@@ -55,45 +60,55 @@ FETCH NEXT FROM cur INTO @Schema, @Src, @Base;
 
 WHILE @@FETCH_STATUS = 0
 BEGIN
-    /* If base table missing, record and continue */
-    IF OBJECT_ID(QUOTENAME(@Schema) + '.' + QUOTENAME(@Base), 'U') IS NULL
+    /* If base table missing */
+    IF OBJECT_ID(QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base), 'U') IS NULL
     BEGIN
-        SET @bc = NULL; SET @sc = NULL; SET @bms = NULL; SET @smb = NULL;
-        SET @CntEq = 0; SET @Exact = 0;
-        SET @DiffQuery = N'/* Base table not found: ' + @Schema + N'.' + @Base + N' */';
-
         EXEC sp_executesql
             @InsertRowSql,
-            N'@pSchema nvarchar(128), @pBase nvarchar(128), @pSrc nvarchar(128),
+            N'@pSchema sysname, @pBase sysname, @pSrc sysname,
               @pBC int, @pSC int, @pCntEq bit, @pExact bit, @pBms int, @pSmb int, @pDiff nvarchar(max)',
             @pSchema=@Schema, @pBase=@Base, @pSrc=@Src,
-            @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=@bms, @pSmb=@smb, @pDiff=@DiffQuery;
-
+            @pBC=NULL, @pSC=NULL, @pCntEq=0, @pExact=0, @pBms=NULL, @pSmb=NULL,
+            @pDiff=N'/* Base table not found: ' + @Schema + N'.' + @Base + N' */';
         GOTO NextTable;
     END
 
-    /* Build common comparable columns (exclude computed & rowversion) */
+    /* Build list of columns to compare
+       1) Start with columns common to base & source, excluding computed/rowversion
+       2) If @GlobalColsCSV provided, keep ONLY columns listed there (that exist)
+          Otherwise use all common comparable columns
+    */
     ;WITH basecols AS (
         SELECT c.name, c.column_id
         FROM sys.columns c
-        WHERE c.[object_id] = OBJECT_ID(QUOTENAME(@Schema) + '.' + QUOTENAME(@Base))
+        WHERE c.[object_id] = OBJECT_ID(QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base))
           AND c.is_computed = 0
-          AND TYPE_NAME(c.user_type_id) NOT IN ('timestamp','rowversion')
+          AND TYPE_NAME(c.user_type_id) NOT IN (N'timestamp', N'rowversion')
     ),
     srccols AS (
         SELECT c.name
         FROM sys.columns c
-        WHERE c.[object_id] = OBJECT_ID(QUOTENAME(@Schema) + '.' + QUOTENAME(@Src))
+        WHERE c.[object_id] = OBJECT_ID(QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src))
     ),
     common AS (
         SELECT b.name, b.column_id
         FROM basecols b
         INNER JOIN srccols s ON s.name = b.name
+    ),
+    filtered AS (
+        SELECT c.name, c.column_id
+        FROM common c
+        WHERE (NULLIF(LTRIM(RTRIM(@GlobalColsCSV)), N'') IS NULL)  -- no global list => keep all common
+           OR EXISTS (
+                SELECT 1
+                FROM STRING_SPLIT(@GlobalColsCSV, N',') ss
+                WHERE LTRIM(RTRIM(ss.value)) = c.name
+           )
     )
-    SELECT @Cols = STRING_AGG(QUOTENAME(name), ', ') WITHIN GROUP (ORDER BY column_id)
-    FROM common;
+    SELECT @Cols = STRING_AGG(QUOTENAME(name), N', ') WITHIN GROUP (ORDER BY column_id)
+    FROM filtered;
 
-    /* If no comparable columns, store rowcounts only and a hint */
+    /* If no comparable columns */
     IF @Cols IS NULL OR @Cols = N''
     BEGIN
         SET @sql = N'
@@ -101,19 +116,15 @@ BEGIN
             SELECT @sc = COUNT(*) FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N';';
         EXEC sp_executesql @sql, N'@bc int OUTPUT, @sc int OUTPUT', @bc=@bc OUTPUT, @sc=@sc OUTPUT;
 
-        SET @CntEq = CASE WHEN @bc = @sc THEN 1 ELSE 0 END;
-        SET @Exact = 0;
-        SET @bms = NULL; SET @smb = NULL;
-        SET @DiffQuery = N'/* No common comparable columns between ' + @Schema + N'.' + @Base +
-                         N' and ' + @Schema + N'.' + @Src + N'. Check schema differences. */';
-
         EXEC sp_executesql
             @InsertRowSql,
-            N'@pSchema nvarchar(128), @pBase nvarchar(128), @pSrc nvarchar(128),
+            N'@pSchema sysname, @pBase sysname, @pSrc sysname,
               @pBC int, @pSC int, @pCntEq bit, @pExact bit, @pBms int, @pSmb int, @pDiff nvarchar(max)',
             @pSchema=@Schema, @pBase=@Base, @pSrc=@Src,
-            @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=@bms, @pSmb=@smb, @pDiff=@DiffQuery;
-
+            @pBC=@bc, @pSC=@sc,
+            @pCntEq=CASE WHEN @bc=@sc THEN 1 ELSE 0 END,
+            @pExact=0, @pBms=NULL, @pSmb=NULL,
+            @pDiff=N'/* No comparable columns for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' */';
         GOTO NextTable;
     END
 
@@ -129,59 +140,4 @@ BEGIN
         SELECT @smb = COUNT(*) FROM (
             SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N'
             EXCEPT
-            SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N'
-        ) Y;';
-    EXEC sp_executesql
-        @sql,
-        N'@bc int OUTPUT, @sc int OUTPUT, @bms int OUTPUT, @smb int OUTPUT',
-        @bc=@bc OUTPUT, @sc=@sc OUTPUT, @bms=@bms OUTPUT, @smb=@smb OUTPUT;
-
-    /* Build diff query text (only if there are diffs) */
-    IF ISNULL(@bms,0)=0 AND ISNULL(@smb,0)=0
-    BEGIN
-        SET @DiffQuery = NULL;
-        SET @Exact = 1;
-    END
-    ELSE
-    BEGIN
-        SET @Exact = 0;
-        SET @DiffQuery = N'
-/* Differences for ' + @Schema + N'.' + @Base + N' vs ' + @Schema + N'.' + @Src + N' */
-SELECT ''BASE_MINUS'' AS side, * FROM (
-    SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N'
-    EXCEPT
-    SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N'
-) d
-UNION ALL
-SELECT ''SRC_MINUS'' AS side, * FROM (
-    SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Src)  + N'
-    EXCEPT
-    SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.' + QUOTENAME(@Base) + N'
-) d;';
-    END
-
-    SET @CntEq = CASE WHEN @bc = @sc THEN 1 ELSE 0 END;
-
-    /* Insert summary row into the final table */
-    EXEC sp_executesql
-        @InsertRowSql,
-        N'@pSchema nvarchar(128), @pBase nvarchar(128), @pSrc nvarchar(128),
-          @pBC int, @pSC int, @pCntEq bit, @pExact bit, @pBms int, @pSmb int, @pDiff nvarchar(max)',
-        @pSchema=@Schema, @pBase=@Base, @pSrc=@Src,
-        @pBC=@bc, @pSC=@sc, @pCntEq=@CntEq, @pExact=@Exact, @pBms=@bms, @pSmb=@smb, @pDiff=@DiffQuery;
-
-    NextTable:
-    FETCH NEXT FROM cur INTO @Schema, @Src, @Base;
-END
-
-CLOSE cur;
-DEALLOCATE cur;
-
-/* =======================
-   Show results
-   ======================= */
-DECLARE @show nvarchar(max) = N'SELECT * FROM ' + @SummaryTableQuoted + N'
-ORDER BY ExactMatch DESC, CountEqual DESC, SchemaName, BaseTable;';
-EXEC(@show);
-
-PRINT N'→ Summary written to ' + @SummaryTableQuoted + N'. Copy the DiffQuery text for any row with ExactMatch = 0 to see differences.';
+            SELECT ' + @Cols + N' FROM ' + QUOTENAME(@Schema) + N'.

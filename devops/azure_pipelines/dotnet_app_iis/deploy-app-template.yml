@@ -1,0 +1,33 @@
+parameters:
+  - name: appName
+    type: string
+  - name: server
+    type: string
+  - name: siteName
+    type: string
+
+steps:
+  - task: replacetokens@6
+    inputs:
+      rootDirectory: "$(Pipeline.Workspace)/drop/${{ parameters.appName }}"
+      targetFiles: "**/appsettings*.json"
+      encoding: "auto"
+      writeBOM: true
+      actionOnMissing: "warn"
+      keepToken: false
+      tokenPrefix: "__"
+      tokenSuffix: "__"
+
+  - powershell: |
+      $source = "$(Pipeline.Workspace)/drop/${{ parameters.appName }}"
+      $dest = "D:\Deploy\${{ parameters.appName }}_$(Build.BuildId)"
+
+      New-Item -Path $dest -ItemType Directory -Force
+      Copy-Item -Path "$source\*" -Destination $dest -Recurse -Force
+
+      Invoke-Command -ComputerName "${{ parameters.server }}" -ScriptBlock {
+        Import-Module WebAdministration
+        Set-ItemProperty "IIS:\Sites\${{ parameters.siteName }}" -Name physicalPath -Value "$using:dest"
+        Restart-WebItem "IIS:\Sites\${{ parameters.siteName }}"
+      }
+    displayName: Deploy ${{ parameters.appName }} to ${{ parameters.server }}

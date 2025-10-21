@@ -1,0 +1,41 @@
+parameters:
+  - name: env
+    type: string
+  - name: variableGroup
+    type: string
+
+jobs:
+  - job: DeployInternal
+    displayName: Deploy Internal Server (portal + api)
+    variables:
+      - group: ${{ parameters.variableGroup }}
+    steps:
+      - download: current
+        artifact: drop
+
+      - template: deploy-app-template.yml
+        parameters:
+          appName: portal
+          server: $(internalServer)
+          siteName: $(internalPortalSite)
+
+      - template: deploy-app-template.yml
+        parameters:
+          appName: api
+          server: $(internalServer)
+          siteName: $(internalApiSite)
+
+  - job: DeployExternal
+    displayName: Deploy External Server (portal only)
+    dependsOn: DeployInternal
+    variables:
+      - group: ${{ parameters.variableGroup }}
+    steps:
+      - download: current
+        artifact: drop
+
+      - template: deploy-app-template.yml
+        parameters:
+          appName: portal
+          server: $(externalServer)
+          siteName: $(externalPortalSite)

@@ -1,0 +1,89 @@
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: [main]
+
+stages:
+  # ---------------------------------------
+  # Build Stage
+  # ---------------------------------------
+  - stage: Build
+    displayName: Build & Publish
+    jobs:
+      - job: BuildJob
+        displayName: Build and Cache App
+        pool:
+          vmImage: "windows-latest"
+
+        steps:
+          - checkout: self
+
+          # NuGet cache
+          - task: Cache@2
+            inputs:
+              key: 'nuget | "$(Agent.OS)" | **/*.csproj'
+              path: ~/.nuget/packages
+
+          # NPM cache (if needed)
+          - task: Cache@2
+            inputs:
+              key: 'npm | "$(Agent.OS)" | package-lock.json'
+              path: $(Pipeline.Workspace)/.npm
+
+          - task: UseDotNet@2
+            inputs:
+              packageType: "sdk"
+              version: "6.x" # Or whatever version you use
+
+          - script: dotnet restore
+          - script: dotnet build --configuration Release
+          - script: dotnet publish -c Release -o $(Build.ArtifactStagingDirectory)
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+              ArtifactName: "drop"
+              publishLocation: "Container"
+
+  # ---------------------------------------
+  # Deploy env4
+  # ---------------------------------------
+  - stage: Deploy_env4
+    displayName: Deploy to ENV4
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    dependsOn: Build
+    jobs:
+      - template: templates/deploy-full-env.yml
+        parameters:
+          env: env4
+          variableGroup: env4-lib
+
+  # ---------------------------------------
+  # Deploy env5
+  # ---------------------------------------
+  - stage: Deploy_env5
+    displayName: Deploy to ENV5
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    dependsOn: Build
+    jobs:
+      - template: templates/deploy-full-env.yml
+        parameters:
+          env: env5
+          variableGroup: env5-lib
+
+  # ---------------------------------------
+  # Deploy env6 with approval
+  # ---------------------------------------
+  - stage: Deploy_env6
+    displayName: Deploy to ENV6
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    dependsOn: Build
+    environment: env6 # Approval can be configured in DevOps Environments
+    jobs:
+      - template: templates/deploy-full-env.yml
+        parameters:
+          env: env6
+          variableGroup: env6-lib

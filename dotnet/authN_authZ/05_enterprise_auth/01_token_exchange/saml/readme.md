@@ -1,0 +1,1 @@
+ran `dotnet dev-certs https -ep saml-idp-signing.pfx -p "devpassword"`

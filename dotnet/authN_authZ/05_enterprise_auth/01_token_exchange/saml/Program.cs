@@ -1,5 +1,9 @@
+using saml.Saml;
+
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddSingleton(new IdpOptions());
+builder.Services.AddSingleton<CertStore>();
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 

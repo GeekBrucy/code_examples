@@ -68,7 +68,6 @@ namespace saml.Controllers
 
             var xml = RedirectBindingDecoder.DecodeSamlRequestFromRedirect(samlRequest);
 
-            // Parse key fields from AuthnRequest
             var doc = XDocument.Parse(xml);
             XNamespace samlp = "urn:oasis:names:tc:SAML:2.0:protocol";
             XNamespace saml = "urn:oasis:names:tc:SAML:2.0:assertion";
@@ -77,29 +76,34 @@ namespace saml.Controllers
             if (root is null || root.Name != samlp + "AuthnRequest")
                 return BadRequest("Decoded XML is not a SAML2 AuthnRequest.");
 
-            var id = (string?)root.Attribute("ID");
-            var issueInstant = (string?)root.Attribute("IssueInstant");
-            var destination = (string?)root.Attribute("Destination");
+            var requestId = (string?)root.Attribute("ID");
             var acsUrl = (string?)root.Attribute("AssertionConsumerServiceURL");
+            var spEntityId = root.Element(saml + "Issuer")?.Value;
 
-            var issuer = root.Element(saml + "Issuer")?.Value;
+            if (string.IsNullOrEmpty(requestId) || string.IsNullOrEmpty(acsUrl) || string.IsNullOrEmpty(spEntityId))
+                return BadRequest("AuthnRequest missing ID / AssertionConsumerServiceURL / Issuer.");
 
-            // For now: return a debug payload so you can see what you received.
-            return Ok(new
+            // For now we “authenticate” the user as a fixed subject.
+            // Next iterations: use Windows identity / login session.
+            var subject = "demo-user";
+
+            var responseXml = SamlResponseBuilder.BuildUnsignedResponseXml(
+                inResponseTo: requestId,
+                destinationAcsUrl: acsUrl,
+                spEntityId: spEntityId,
+                subjectNameId: subject
+            );
+
+            var samlResponse = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(responseXml));
+
+            var model = new PostModel
             {
-                RelayState,
-                SigAlg,
-                SignaturePresent = !string.IsNullOrEmpty(Signature),
-                AuthnRequest = new
-                {
-                    ID = id,
-                    IssueInstant = issueInstant,
-                    Destination = destination,
-                    AssertionConsumerServiceURL = acsUrl,
-                    Issuer = issuer,
-                },
-                RawXml = xml
-            });
+                AcsUrl = acsUrl,
+                SamlResponse = samlResponse,
+                RelayState = RelayState
+            };
+
+            return View("Post", model);
         }
 
         [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]

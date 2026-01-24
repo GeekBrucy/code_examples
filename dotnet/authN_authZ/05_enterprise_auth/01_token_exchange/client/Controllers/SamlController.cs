@@ -1,7 +1,11 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Xml.Linq;
 using client.Saml;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -50,21 +54,47 @@ namespace client.Controllers
         // POST /saml/acs  <- receives SAMLResponse from IdP (we'll implement IdP POST next)
         [HttpPost("acs")]
         [IgnoreAntiforgeryToken] // important: IdP will POST, no antiforgery token
-        public IActionResult Acs([FromForm] string? SAMLResponse, [FromForm] string? RelayState)
+        public async Task<IActionResult> Acs([FromForm] string? SAMLResponse, [FromForm] string? RelayState)
         {
             if (string.IsNullOrWhiteSpace(SAMLResponse))
                 return BadRequest("Missing form field: SAMLResponse");
 
-            // SAMLResponse in POST binding is usually base64(XML) (not compressed)
             var xmlBytes = Convert.FromBase64String(SAMLResponse);
             var xml = Encoding.UTF8.GetString(xmlBytes);
 
-            // For now just display what came in (we’ll validate signature + sign-in cookie later)
-            return Ok(new
+            // Parse SAML Response
+            var doc = XDocument.Parse(xml);
+            XNamespace samlp = "urn:oasis:names:tc:SAML:2.0:protocol";
+            XNamespace saml = "urn:oasis:names:tc:SAML:2.0:assertion";
+
+            var response = doc.Root;
+            if (response is null || response.Name != samlp + "Response")
+                return BadRequest("Not a SAML2 Response.");
+
+            var nameId = response
+                .Descendants(saml + "Subject")
+                .Descendants(saml + "NameID")
+                .FirstOrDefault()
+                ?.Value;
+
+            if (string.IsNullOrWhiteSpace(nameId))
+                return BadRequest("No NameID in SAML assertion.");
+
+            // Minimal claims (we'll add attributes later)
+            var claims = new List<Claim>
             {
-                RelayState,
-                RawXml = xml
-            });
+                new Claim(ClaimTypes.NameIdentifier, nameId),
+                new Claim(ClaimTypes.Name, nameId),
+                new Claim("relay_state", RelayState ?? "")
+            };
+
+            var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+            var principal = new ClaimsPrincipal(identity);
+
+            await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
+
+            // Redirect to a protected page to prove login works
+            return Redirect("/");
         }
     }
 }

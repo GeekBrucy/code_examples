@@ -1,5 +1,8 @@
+using System.Security.Claims;
 using System.Text;
 using System.Xml.Linq;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
 using saml.Saml;
 
@@ -83,9 +86,13 @@ namespace saml.Controllers
             if (string.IsNullOrEmpty(requestId) || string.IsNullOrEmpty(acsUrl) || string.IsNullOrEmpty(spEntityId))
                 return BadRequest("AuthnRequest missing ID / AssertionConsumerServiceURL / Issuer.");
 
-            // For now we “authenticate” the user as a fixed subject.
-            // Next iterations: use Windows identity / login session.
-            var subject = "demo-user";
+            if (!(User?.Identity?.IsAuthenticated ?? false))
+            {
+                var returnUrl = Request.Path + Request.QueryString;
+                return RedirectToAction("Login", new { returnUrl });
+            }
+
+            var subject = User.Identity?.Name ?? "unknown";
 
             var responseXml = SamlResponseBuilder.BuildUnsignedResponseXml(
                 inResponseTo: requestId,
@@ -104,6 +111,31 @@ namespace saml.Controllers
             };
 
             return View("Post", model);
+        }
+
+        // GET /saml/login?returnUrl=/saml/sso?... (we'll call it internally)
+        [HttpGet("login")]
+        public async Task<IActionResult> Login([FromQuery] string returnUrl)
+        {
+            // OS-agnostic: works on macOS/Linux/Windows
+            // these should only be used locally
+            var userName = Environment.UserName;
+            var machine = Environment.MachineName;
+
+            var subject = $"{userName}@{machine}";
+
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.NameIdentifier, subject),
+                new Claim(ClaimTypes.Name, subject),
+            };
+
+            var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+            var principal = new ClaimsPrincipal(identity);
+
+            await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
+
+            return LocalRedirect(returnUrl);
         }
 
         [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]

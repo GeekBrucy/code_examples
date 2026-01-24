@@ -1,9 +1,17 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
 using saml.Saml;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton(new IdpOptions());
 builder.Services.AddSingleton<CertStore>();
+
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(opt =>
+    {
+        opt.Cookie.Name = "idp.auth";
+        opt.SlidingExpiration = true;
+    });
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 
@@ -19,7 +27,7 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseRouting();
-
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapStaticAssets();

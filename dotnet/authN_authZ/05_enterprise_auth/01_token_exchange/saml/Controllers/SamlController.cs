@@ -100,6 +100,9 @@ namespace saml.Controllers
                 spEntityId: spEntityId,
                 subjectNameId: subject
             );
+            Console.WriteLine(new string('@', 50));
+            Console.WriteLine($"[IdP] Signing cert thumbprint = {_certs.SigningCert.Thumbprint}");
+            Console.WriteLine(new string('@', 50));
             var signedResponseXml = XmlDsigSigner.SignAssertion(responseXml, _certs.SigningCert);
             var samlResponse = Convert.ToBase64String(Encoding.UTF8.GetBytes(signedResponseXml));
 

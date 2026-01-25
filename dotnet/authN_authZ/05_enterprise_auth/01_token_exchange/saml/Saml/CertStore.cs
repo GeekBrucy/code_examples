@@ -8,7 +8,7 @@ namespace saml.Saml
 
         public CertStore(IWebHostEnvironment env)
         {
-            var path = Path.Combine(env.ContentRootPath, "saml-idp-signing.pfx");
+            var path = Path.Combine(env.ContentRootPath, "idp-signing.pfx");
 
             if (!File.Exists(path))
                 throw new FileNotFoundException($"Signing cert not found: {path}");

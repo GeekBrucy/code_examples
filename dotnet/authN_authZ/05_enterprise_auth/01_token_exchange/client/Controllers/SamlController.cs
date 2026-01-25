@@ -64,8 +64,11 @@ namespace client.Controllers
 
             var xmlBytes = Convert.FromBase64String(SAMLResponse);
             var xml = Encoding.UTF8.GetString(xmlBytes);
+            Console.WriteLine(new string('@', 50));
+            Console.WriteLine($"[SP] Trusted IdP cert thumbprint = {_idpCerts.IdpSigningCert.Thumbprint}");
+            Console.WriteLine(new string('@', 50));
             var ok = XmlDsigVerifier.VerifyAssertionSignature(xml, _idpCerts.IdpSigningCert);
-            Console.WriteLine($"[SAML] Signature valid = {ok}");
+            Console.WriteLine($"[SP] Saml Signature valid = {ok}");
 
             if (!ok) return Unauthorized("Invalid SAML Assertion signature.");
             // Parse SAML Response

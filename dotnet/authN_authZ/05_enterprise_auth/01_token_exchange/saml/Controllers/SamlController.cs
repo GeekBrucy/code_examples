@@ -100,8 +100,8 @@ namespace saml.Controllers
                 spEntityId: spEntityId,
                 subjectNameId: subject
             );
-
-            var samlResponse = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(responseXml));
+            var signedResponseXml = XmlDsigSigner.SignAssertion(responseXml, _certs.SigningCert);
+            var samlResponse = Convert.ToBase64String(Encoding.UTF8.GetBytes(signedResponseXml));
 
             var model = new PostModel
             {

@@ -17,10 +17,13 @@ namespace client.Controllers
         private readonly ILogger<SamlController> _logger;
         private readonly SpOptions _opt;
 
-        public SamlController(ILogger<SamlController> logger, SpOptions opt)
+        private readonly IdpCertStore _idpCerts;
+
+        public SamlController(ILogger<SamlController> logger, SpOptions opt, IdpCertStore idpCerts)
         {
             _logger = logger;
             _opt = opt;
+            _idpCerts = idpCerts;
         }
         // GET /saml/login  -> redirects browser to IdP with SAMLRequest
         [HttpGet("login")]
@@ -61,7 +64,10 @@ namespace client.Controllers
 
             var xmlBytes = Convert.FromBase64String(SAMLResponse);
             var xml = Encoding.UTF8.GetString(xmlBytes);
+            var ok = XmlDsigVerifier.VerifyAssertionSignature(xml, _idpCerts.IdpSigningCert);
+            Console.WriteLine($"[SAML] Signature valid = {ok}");
 
+            if (!ok) return Unauthorized("Invalid SAML Assertion signature.");
             // Parse SAML Response
             var doc = XDocument.Parse(xml);
             XNamespace samlp = "urn:oasis:names:tc:SAML:2.0:protocol";

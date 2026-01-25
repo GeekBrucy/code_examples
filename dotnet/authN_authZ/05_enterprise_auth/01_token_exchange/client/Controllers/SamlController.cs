@@ -17,9 +17,9 @@ namespace client.Controllers
         private readonly ILogger<SamlController> _logger;
         private readonly SpOptions _opt;
 
-        private readonly IdpCertStore _idpCerts;
+        private readonly IdpMetadataCertStore _idpCerts;
 
-        public SamlController(ILogger<SamlController> logger, SpOptions opt, IdpCertStore idpCerts)
+        public SamlController(ILogger<SamlController> logger, SpOptions opt, IdpMetadataCertStore idpCerts)
         {
             _logger = logger;
             _opt = opt;
@@ -65,9 +65,9 @@ namespace client.Controllers
             var xmlBytes = Convert.FromBase64String(SAMLResponse);
             var xml = Encoding.UTF8.GetString(xmlBytes);
             Console.WriteLine(new string('@', 50));
-            Console.WriteLine($"[SP] Trusted IdP cert thumbprint = {_idpCerts.IdpSigningCert.Thumbprint}");
+            Console.WriteLine($"[SP] Trusted IdP cert thumbprint = {_idpCerts.SigningCert.Thumbprint}");
             Console.WriteLine(new string('@', 50));
-            var ok = XmlDsigVerifier.VerifyAssertionSignature(xml, _idpCerts.IdpSigningCert);
+            var ok = XmlDsigVerifier.VerifyAssertionSignature(xml, _idpCerts.SigningCert);
             Console.WriteLine($"[SP] Saml Signature valid = {ok}");
 
             if (!ok) return Unauthorized("Invalid SAML Assertion signature.");

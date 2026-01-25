@@ -2,11 +2,20 @@ using client.Saml;
 using Microsoft.AspNetCore.Authentication.Cookies;
 
 var builder = WebApplication.CreateBuilder(args);
+var idpMetadataUrl = builder.Configuration["Saml:IdpMetadataUrl"]!;
+var expectedIdpEntityId = builder.Configuration["Saml:ExpectedIdpEntityId"]!;
+// Fetch metadata once at startup (simple, good for dev)
+using (var http = new HttpClient())
+{
+    // If your localhost HTTPS trust is messy on macOS, fix dev cert trust rather than disabling validation.
+    var metadataXml = http.GetStringAsync(idpMetadataUrl).GetAwaiter().GetResult();
 
+    builder.Services.AddSingleton(new IdpMetadataCertStore(metadataXml, expectedIdpEntityId));
+}
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 builder.Services.AddSingleton(new SpOptions());
-builder.Services.AddSingleton<IdpCertStore>();
+// builder.Services.AddSingleton<IdpCertStore>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(opt =>
     {

@@ -125,6 +125,23 @@ namespace client.Controllers
             if (now + skew < notBefore || now - skew >= notOnOrAfter)
                 return Unauthorized("SAML assertion expired or not yet valid.");
 
+            // Read AttributeStatement
+            var attributes = doc.Descendants(saml + "Attribute")
+                .Select(attr => new
+                {
+                    Name = attr.Attribute("Name")?.Value,
+                    Values = attr.Elements(saml + "AttributeValue").Select(v => v.Value).ToList()
+                })
+                .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+                .ToList();
+
+            string? email = attributes
+                .FirstOrDefault(a => a.Name == "email")
+                ?.Values.FirstOrDefault();
+
+            var roles = attributes
+                .FirstOrDefault(a => a.Name == "role")
+                ?.Values ?? new List<string>();
             // Minimal claims (we'll add attributes later)
             var claims = new List<Claim>
             {
@@ -132,6 +149,17 @@ namespace client.Controllers
                 new Claim(ClaimTypes.Name, nameId),
                 new Claim("relay_state", RelayState ?? "")
             };
+
+            if (!string.IsNullOrWhiteSpace(email))
+                claims.Add(new Claim(ClaimTypes.Email, email));
+
+            Console.WriteLine(new string('@', 50));
+            foreach (var r in roles)
+            {
+                Console.WriteLine($"Roles: {r}");
+                claims.Add(new Claim(ClaimTypes.Role, r));
+            }
+            Console.WriteLine(new string('@', 50));
 
             var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
             var principal = new ClaimsPrincipal(identity);

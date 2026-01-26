@@ -76,6 +76,25 @@ namespace saml.Saml
                                     new XElement(saml + "AuthnContextClassRef",
                                         "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport")
                                 )
+                            ),
+                            new XElement(saml + "AttributeStatement",
+                                new XElement(saml + "Attribute",
+                                    new XAttribute("Name", "email"),
+                                    new XElement(saml + "AttributeValue", $"{subjectNameId}@example.com")
+                                ),
+                                new XElement(saml + "Attribute",
+                                    new XAttribute("Name", "given_name"),
+                                    new XElement(saml + "AttributeValue", "Demo")
+                                ),
+                                new XElement(saml + "Attribute",
+                                    new XAttribute("Name", "family_name"),
+                                    new XElement(saml + "AttributeValue", "User")
+                                ),
+                                new XElement(saml + "Attribute",
+                                    new XAttribute("Name", "role"),
+                                    new XElement(saml + "AttributeValue", "Admin"),
+                                    new XElement(saml + "AttributeValue", "Reader")
+                                )
                             )
                         )
                     )

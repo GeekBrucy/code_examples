@@ -25,6 +25,20 @@ public class HomeController : Controller
         return View();
     }
 
+    [Authorize(Roles = "Admin")]
+    [HttpGet("/admin")]
+    public IActionResult AdminOnly()
+    {
+        return Content($"Admin OK: {User.Identity?.Name}");
+    }
+
+    [Authorize(Roles = "Reader")]
+    [HttpGet("/reader")]
+    public IActionResult ReaderOnly()
+    {
+        return Content($"Reader OK: {User.Identity?.Name}");
+    }
+
     [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
     public IActionResult Error()
     {

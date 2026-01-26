@@ -1,0 +1,27 @@
+@{
+    ViewData["Title"] = "Home";
+}
+
+<h1>ComponentSpace SAML IdP <span class="badge badge-idp">Identity Provider</span></h1>
+
+@if (User.Identity?.IsAuthenticated == true)
+{
+    <p>Logged in as: <strong>@User.Identity.Name</strong></p>
+    <p><a href="/saml/logout">Logout</a></p>
+}
+else
+{
+    <p>Not logged in.</p>
+    <p><a href="/saml/login">Login</a></p>
+}
+
+<hr />
+
+<h3>Endpoints</h3>
+<ul>
+    <li><strong>Metadata:</strong> <a href="/saml/metadata">/saml/metadata</a></li>
+    <li><strong>SSO:</strong> /saml/sso</li>
+</ul>
+
+<h3>Configured Service Providers</h3>
+<p>See <code>appsettings.json</code> for partner SP configurations.</p>

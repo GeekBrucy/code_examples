@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Client.Security;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -16,11 +17,11 @@ namespace client.Saml
         private readonly ApiJwtOptions _opt;
         private readonly SigningCredentials _signing;
 
-        public ApiTokenFactory(IOptions<ApiJwtOptions> opt)
+        public ApiTokenFactory(IOptions<ApiJwtOptions> opt, JwtSigningCertStore certs)
         {
             _opt = opt.Value;
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_opt.SigningKey));
-            _signing = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var rsaKey = new X509SecurityKey(certs.SigningCert);
+            _signing = new SigningCredentials(rsaKey, SecurityAlgorithms.RsaSha256);
         }
 
         public string CreateToken(ClaimsPrincipal user)

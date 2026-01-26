@@ -1,4 +1,5 @@
 using client.Saml;
+using Client.Security;
 using Microsoft.AspNetCore.Authentication.Cookies;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -26,7 +27,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 builder.Services.AddAuthorization();
 builder.Services.Configure<ApiJwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.AddSingleton<IApiTokenFactory, ApiTokenFactory>();
-
+builder.Services.AddSingleton<JwtSigningCertStore>();
 builder.Services.AddHttpClient("Api", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Api:BaseUrl"]!);

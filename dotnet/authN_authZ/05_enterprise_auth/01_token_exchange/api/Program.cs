@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using System.Text;
+using Api.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,10 +12,20 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
-
+builder.Services.AddSingleton<JwtVerificationCertStore>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(opt =>
     {
+        // Resolve public key from DI
+        opt.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = ctx =>
+            {
+                // keep default behavior
+                return Task.CompletedTask;
+            }
+        };
+
         opt.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -23,18 +35,23 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidAudience = builder.Configuration["Jwt:Audience"],
 
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:SigningKey"]!)),
-
+            // We'll set IssuerSigningKey after app is built (see below)
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromSeconds(30),
+
             NameClaimType = "name",
             RoleClaimType = "role"
         };
     });
 builder.Services.AddAuthorization();
 var app = builder.Build();
+var certStore = app.Services.GetRequiredService<JwtVerificationCertStore>();
+var tvp = app.Services
+    .GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
+    .Get(JwtBearerDefaults.AuthenticationScheme)
+    .TokenValidationParameters;
 
+tvp.IssuerSigningKey = new X509SecurityKey(certStore.PublicCert);
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {

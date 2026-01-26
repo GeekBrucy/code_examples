@@ -24,7 +24,13 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         opt.Cookie.Name = "client.auth";
     });
 builder.Services.AddAuthorization();
+builder.Services.Configure<ApiJwtOptions>(builder.Configuration.GetSection("Jwt"));
+builder.Services.AddSingleton<IApiTokenFactory, ApiTokenFactory>();
 
+builder.Services.AddHttpClient("Api", client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Api:BaseUrl"]!);
+});
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

@@ -1,0 +1,21 @@
+@{
+    ViewData["Title"] = "Home";
+}
+
+<h1>Custom SP → ComponentSpace IdP <span class="badge">Authenticated</span></h1>
+<p><strong>Port 5013</strong> | IdP: <code>https://localhost:5009</code></p>
+
+<p>Welcome, <strong>@User.Identity?.Name</strong>!</p>
+
+<h2>Your Claims</h2>
+<table class="claims-table">
+    <thead><tr><th>Type</th><th>Value</th></tr></thead>
+    <tbody>
+        @foreach (var claim in User.Claims)
+        {
+            <tr><td>@claim.Type.Split('/').Last()</td><td>@claim.Value</td></tr>
+        }
+    </tbody>
+</table>
+
+<a href="/saml/logout">Logout</a>

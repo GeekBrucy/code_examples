@@ -13,6 +13,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "client.ComponentSpace", "cl
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "saml.ComponentSpace", "saml.ComponentSpace\saml.ComponentSpace.csproj", "{86007624-668D-4896-A60A-32502E560BAE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "client2.ComponentSpace", "client2.ComponentSpace\client2.ComponentSpace.csproj", "{2D7E6053-65E8-47F5-9A4C-93003704EBEA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "client2", "client2\client2.csproj", "{0B79CD3A-38EB-4CE7-911C-B43BF725E5AC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +46,13 @@ Global
 		{86007624-668D-4896-A60A-32502E560BAE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{86007624-668D-4896-A60A-32502E560BAE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{86007624-668D-4896-A60A-32502E560BAE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2D7E6053-65E8-47F5-9A4C-93003704EBEA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2D7E6053-65E8-47F5-9A4C-93003704EBEA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2D7E6053-65E8-47F5-9A4C-93003704EBEA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2D7E6053-65E8-47F5-9A4C-93003704EBEA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0B79CD3A-38EB-4CE7-911C-B43BF725E5AC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0B79CD3A-38EB-4CE7-911C-B43BF725E5AC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0B79CD3A-38EB-4CE7-911C-B43BF725E5AC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0B79CD3A-38EB-4CE7-911C-B43BF725E5AC}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -18,18 +18,21 @@ namespace client.Controllers
         private readonly SpOptions _opt;
 
         private readonly IdpMetadataCertStore _idpCerts;
+        private readonly AuthnRequestStore _requestStore;
 
-        public SamlController(ILogger<SamlController> logger, SpOptions opt, IdpMetadataCertStore idpCerts)
+        public SamlController(ILogger<SamlController> logger, SpOptions opt, IdpMetadataCertStore idpCerts, AuthnRequestStore requestStore)
         {
             _logger = logger;
             _opt = opt;
             _idpCerts = idpCerts;
+            _requestStore = requestStore;
         }
         // GET /saml/login  -> redirects browser to IdP with SAMLRequest
         [HttpGet("login")]
         public IActionResult Login()
         {
             var requestId = "_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+            _requestStore.Add(requestId);
             var issueInstant = DateTime.UtcNow.ToString("o");
 
             // Minimal AuthnRequest (SP-initiated)
@@ -88,6 +91,39 @@ namespace client.Controllers
 
             if (string.IsNullOrWhiteSpace(nameId))
                 return BadRequest("No NameID in SAML assertion.");
+
+            /*
+                This prevents:
+                    * replay attacks
+                    * unsolicited assertions
+            */
+            var inResponseTo = response.Attribute("InResponseTo")?.Value;
+
+            if (string.IsNullOrWhiteSpace(inResponseTo) ||
+                !_requestStore.TryConsume(inResponseTo, TimeSpan.FromMinutes(5)))
+
+                return Unauthorized($"Invalid or replayed SAML response (InResponseTo: {inResponseTo}).");
+
+            // This prevents token forwarding to another SP.
+            var audience = doc.Descendants(saml + "Audience").FirstOrDefault()?.Value;
+            if (!string.Equals(audience, _opt.EntityId, StringComparison.Ordinal))
+                return Unauthorized("Invalid SAML audience.");
+            /*
+                This prevents:
+                * replay outside validity window
+                * clock skew issues
+            */
+            var conditions = doc.Descendants(saml + "Conditions").FirstOrDefault();
+            if (conditions is null)
+                return Unauthorized("Missing Conditions.");
+
+            var notBefore = DateTime.Parse(conditions.Attribute("NotBefore")!.Value).ToUniversalTime();
+            var notOnOrAfter = DateTime.Parse(conditions.Attribute("NotOnOrAfter")!.Value).ToUniversalTime();
+
+            var now = DateTime.UtcNow;
+            var skew = TimeSpan.FromMinutes(2);
+            if (now + skew < notBefore || now - skew >= notOnOrAfter)
+                return Unauthorized("SAML assertion expired or not yet valid.");
 
             // Minimal claims (we'll add attributes later)
             var claims = new List<Claim>

@@ -15,6 +15,7 @@ using (var http = new HttpClient())
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 builder.Services.AddSingleton(new SpOptions());
+builder.Services.AddSingleton<AuthnRequestStore>();
 // builder.Services.AddSingleton<IdpCertStore>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(opt =>

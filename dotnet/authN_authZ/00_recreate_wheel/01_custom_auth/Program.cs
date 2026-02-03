@@ -1,7 +1,15 @@
+using _01_custom_auth.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
+builder.Services.AddDbContext<AppDbContext>(opt =>
+{
+    var cs = builder.Configuration.GetConnectionString("sqlserver");
+    opt.UseSqlServer(cs);
+});
 
 var app = builder.Build();
 

@@ -2,7 +2,20 @@ using System.Security.Cryptography;
 
 namespace _01_custom_auth.Services
 {
-    // TODO: Ask why sealed
+    /*
+	1.	Validate password input (non-empty).
+	2.	Generate a cryptographically secure random salt.
+	3.	Choose PBKDF2 parameters:
+	•	PRF (e.g., HMACSHA256)
+	•	iterations
+	•	derived key length
+	4.	Derive the key (the “hash”) using PBKDF2(password, salt, iterations,…).
+	5.	Store (hash, salt, iterations, algorithm/version).
+	6.	Verify:
+	•	recompute PBKDF2 with stored salt+iterations
+	•	compare with constant-time equality (avoid timing leaks)
+    
+    */
     public sealed class PasswordHasher
     {
         private const int SaltSizeBytes = 16; // 128-bit

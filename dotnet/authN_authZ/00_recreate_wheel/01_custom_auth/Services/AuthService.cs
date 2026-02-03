@@ -4,6 +4,21 @@ using Microsoft.EntityFrameworkCore;
 
 namespace _01_custom_auth.Services
 {
+    /*
+	1.	Normalize email (trim/lowercase) and validate inputs.
+	2.	Check if the email already exists (unique constraint).
+	3.	Hash password via PasswordHasher (get hash/salt/iterations).
+	4.	Create user row with hash fields.
+	5.	Save changes.
+	6.	Return user id (or a result object).
+
+    Later (login step), AuthService will:
+	1.	Normalize email
+	2.	Load user by email
+	3.	Check lockout rules
+	4.	Verify password
+	5.	Create session + set cookie
+    */
     public sealed class AuthService
     {
         private readonly AppDbContext _db;
@@ -44,6 +59,6 @@ namespace _01_custom_auth.Services
         }
 
         private static string NormalizeEmail(string email)
-            => (email ?? string.Empty).Trim().ToLowerInvariant(); // TODO: WhyToLowerInvariant
+            => (email ?? string.Empty).Trim().ToLowerInvariant();
     }
 }

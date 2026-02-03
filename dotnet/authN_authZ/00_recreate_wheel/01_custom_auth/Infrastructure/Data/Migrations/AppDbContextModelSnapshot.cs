@@ -52,7 +52,7 @@ namespace _01_custom_auth.Infrastructure.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Session");
+                    b.ToTable("Sessions");
                 });
 
             modelBuilder.Entity("_01_custom_auth.Domain.User", b =>
@@ -91,7 +91,7 @@ namespace _01_custom_auth.Infrastructure.Data.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.ToTable("User");
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("_01_custom_auth.Domain.Session", b =>

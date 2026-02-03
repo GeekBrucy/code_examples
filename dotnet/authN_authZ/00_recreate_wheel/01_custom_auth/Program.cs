@@ -1,4 +1,5 @@
 using _01_custom_auth.Infrastructure.Data;
+using _01_custom_auth.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,7 +11,8 @@ builder.Services.AddDbContext<AppDbContext>(opt =>
     var cs = builder.Configuration.GetConnectionString("sqlserver");
     opt.UseSqlServer(cs);
 });
-
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddSingleton<PasswordHasher>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

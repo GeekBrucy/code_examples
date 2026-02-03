@@ -12,7 +12,7 @@ using _01_custom_auth.Infrastructure.Data;
 namespace _01_custom_auth.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260203112457_init_db")]
+    [Migration("20260203115444_init_db")]
     partial class init_db
     {
         /// <inheritdoc />
@@ -55,7 +55,7 @@ namespace _01_custom_auth.Infrastructure.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Session");
+                    b.ToTable("Sessions");
                 });
 
             modelBuilder.Entity("_01_custom_auth.Domain.User", b =>
@@ -94,7 +94,7 @@ namespace _01_custom_auth.Infrastructure.Data.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.ToTable("User");
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("_01_custom_auth.Domain.Session", b =>

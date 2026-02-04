@@ -5,6 +5,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddSingleton<IPgpClearSignService, PgpClearSignService>();
 builder.Services.AddSingleton<INativeClearSignService, NativeClearSignService>();
+builder.Services.AddSingleton<ICertificateClearSignService, CertificateClearSignService>();
 
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -18,6 +19,9 @@ await pgpService.GenerateKeyPairAsync();
 
 var nativeService = app.Services.GetRequiredService<INativeClearSignService>();
 await nativeService.GenerateKeyPairAsync();
+
+var certService = app.Services.GetRequiredService<ICertificateClearSignService>();
+await certService.GenerateCertificateAsync();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

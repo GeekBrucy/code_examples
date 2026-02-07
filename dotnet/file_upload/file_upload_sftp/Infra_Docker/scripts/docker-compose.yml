@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  sftp:
+    image: atmoz/sftp:latest
+    container_name: local-sftp
+    ports:
+      - "2222:22"
+    volumes:
+      - ./docker-volume:/home
+
+      # expose partner outbound folders into uploader's chroot (no symlinks)
+      - ./docker-volume/partnerA/outbound:/home/uploader/outbound/partnerA
+      - ./docker-volume/partnerB/outbound:/home/uploader/outbound/partnerB
+
+    command: >
+      uploader:password123:1001:1001
+      partnerA:password123:1002:1002
+      partnerB:password123:1003:1003
+    restart: unless-stopped

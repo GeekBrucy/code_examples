@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload", "file_upload\file_upload.csproj", "{61C0212D-4C17-49A2-B8FC-DFD0805C010E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload_sftp", "file_upload_sftp\file_upload_sftp.csproj", "{A73BD35B-49CE-4237-A798-59D0DB15A47A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{61C0212D-4C17-49A2-B8FC-DFD0805C010E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{61C0212D-4C17-49A2-B8FC-DFD0805C010E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{61C0212D-4C17-49A2-B8FC-DFD0805C010E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A73BD35B-49CE-4237-A798-59D0DB15A47A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A73BD35B-49CE-4237-A798-59D0DB15A47A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A73BD35B-49CE-4237-A798-59D0DB15A47A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A73BD35B-49CE-4237-A798-59D0DB15A47A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

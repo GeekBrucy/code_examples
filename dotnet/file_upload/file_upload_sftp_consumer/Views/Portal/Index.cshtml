@@ -1,0 +1,70 @@
+@{
+    var partners = ViewBag.Partners as IReadOnlyList<string> ?? [];
+    var selectedPartner = ViewBag.SelectedPartner as string;
+    var files = ViewBag.Files as List<file_upload_sftp_consumer.Models.SftpFileInfo>;
+    var error = ViewBag.Error as string;
+}
+
+<h1>Partner File Portal</h1>
+
+<form method="get" action="/">
+    <label for="partner">Select Partner:</label>
+    <select name="partner" id="partner" onchange="this.form.submit()">
+        <option value="">-- Choose --</option>
+        @foreach (var p in partners)
+        {
+            <option value="@p" selected="@(p == selectedPartner)">@p</option>
+        }
+    </select>
+</form>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="error">@error</div>
+}
+else if (selectedPartner != null && files != null)
+{
+    if (files.Count == 0)
+    {
+        <div class="empty">No files found for @selectedPartner.</div>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>File Name</th>
+                    <th>Size</th>
+                    <th>Last Modified</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var f in files)
+                {
+                    <tr>
+                        <td>@f.Name</td>
+                        <td>@FormatSize(f.Size)</td>
+                        <td>@f.LastModified.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td><a href="/download?partner=@selectedPartner&file=@Uri.EscapeDataString(f.Name)">Download</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@functions {
+    static string FormatSize(long bytes)
+    {
+        string[] sizes = ["B", "KB", "MB", "GB"];
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len /= 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+}

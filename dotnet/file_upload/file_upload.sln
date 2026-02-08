@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload", "file_upload\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload_sftp", "file_upload_sftp\file_upload_sftp.csproj", "{A73BD35B-49CE-4237-A798-59D0DB15A47A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload_sftp_consumer", "file_upload_sftp_consumer\file_upload_sftp_consumer.csproj", "{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +26,9 @@ Global
 		{A73BD35B-49CE-4237-A798-59D0DB15A47A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A73BD35B-49CE-4237-A798-59D0DB15A47A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A73BD35B-49CE-4237-A798-59D0DB15A47A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

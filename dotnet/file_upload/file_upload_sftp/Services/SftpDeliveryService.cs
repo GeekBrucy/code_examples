@@ -127,9 +127,9 @@ public sealed class SftpDeliveryService : ISftpDeliveryService
         }, ct);
     }
 
-    private record ManifestFileEntry(string Name, long Size, string ContentType, string Sha256);
+    internal record ManifestFileEntry(string Name, long Size, string ContentType, string Sha256);
 
-    private static string BuildManifest(int reportId, string sftpDir, List<ManifestFileEntry> files)
+    internal static string BuildManifest(int reportId, string sftpDir, List<ManifestFileEntry> files)
     {
         var manifest = new
         {

@@ -23,12 +23,14 @@ public interface IDistributionService
 public sealed class DistributionService : IDistributionService
 {
     private readonly AppDbContext _db;
+    private readonly IBackgroundJobClient _jobClient;
     private readonly OutboxOptions _options;
     private readonly ILogger<DistributionService> _log;
 
-    public DistributionService(AppDbContext db, IOptions<OutboxOptions> options, ILogger<DistributionService> log)
+    public DistributionService(AppDbContext db, IBackgroundJobClient jobClient, IOptions<OutboxOptions> options, ILogger<DistributionService> log)
     {
         _db = db;
+        _jobClient = jobClient;
         _options = options.Value;
         _log = log;
     }
@@ -103,7 +105,7 @@ public sealed class DistributionService : IDistributionService
             entryIds.Add(entry.Id);
 
             // Fire-and-forget: kick off delivery immediately (outbox is the safety net if this fails)
-            BackgroundJob.Enqueue<OutboxProcessor>(p => p.ProcessSingleEntry(entry.Id));
+            _jobClient.Enqueue<OutboxProcessor>(p => p.ProcessSingleEntry(entry.Id));
 
             var user = users.First(u => u.Id == userId);
             _log.LogInformation(

@@ -21,6 +21,7 @@ public sealed class OutboxProcessor
 {
     private readonly AppDbContext _db;
     private readonly ISftpDeliveryService _deliveryService;
+    private readonly IBackgroundJobClient _jobClient;
     private readonly OutboxOptions _options;
     private readonly ILogger<OutboxProcessor> _log;
 
@@ -37,11 +38,13 @@ public sealed class OutboxProcessor
     public OutboxProcessor(
         AppDbContext db,
         ISftpDeliveryService deliveryService,
+        IBackgroundJobClient jobClient,
         IOptions<OutboxOptions> options,
         ILogger<OutboxProcessor> log)
     {
         _db = db;
         _deliveryService = deliveryService;
+        _jobClient = jobClient;
         _options = options.Value;
         _log = log;
     }
@@ -92,7 +95,7 @@ public sealed class OutboxProcessor
             // Enqueue each as a separate Hangfire job so they run independently.
             // Using entry ID as job ID for deduplication — if fire-and-forget already
             // enqueued this same ID and it hasn't started yet, Hangfire won't create a duplicate.
-            BackgroundJob.Enqueue<OutboxProcessor>(
+            _jobClient.Enqueue<OutboxProcessor>(
                 p => p.ProcessSingleEntry(entryId));
         }
     }
@@ -112,7 +115,7 @@ public sealed class OutboxProcessor
                 .SetProperty(e => e.Attempts, 0)
                 .SetProperty(e => e.ResetCount, e => e.ResetCount + 1)
                 .SetProperty(e => e.NextRetryAt, DateTime.UtcNow)
-                .SetProperty(e => e.LastError, e => $"[Auto-reset #{e.ResetCount + 1}] {e.LastError}"));
+                .SetProperty(e => e.LastError, e => "[Auto-reset] " + e.LastError));
 
         if (resetCount > 0)
         {

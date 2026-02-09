@@ -1,13 +1,9 @@
 namespace file_upload_sftp.Dtos;
 
-public sealed record DistributionRequest(
-    string RecordId,
-    List<string> PartnerIds,
-    List<FilePayload> Files
-);
-
-public sealed record FilePayload(
-    string Name,
-    string ContentBase64,
-    string ContentType
+/// <summary>
+/// Manual refer: explicitly distribute a report to additional external users.
+/// </summary>
+public sealed record ManualReferRequest(
+    int ReportId,
+    List<int> ExternalUserIds
 );

@@ -8,11 +8,15 @@ public enum DeliveryStatus
     Failed
 }
 
+/// <summary>
+/// One row per (report, external user) delivery.
+/// Stores references only — report data is read from the Report tables at delivery time.
+/// </summary>
 public class OutboxEntry
 {
     public int Id { get; set; }
-    public required string RecordId { get; set; }
-    public required string PartnerId { get; set; }
+    public int ReportId { get; set; }
+    public int ExternalUserId { get; set; }
     public DeliveryStatus Status { get; set; } = DeliveryStatus.Pending;
     public int Attempts { get; set; }
     public int MaxAttempts { get; set; } = 5;
@@ -20,6 +24,4 @@ public class OutboxEntry
     public DateTime? NextRetryAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }
-
-    public List<OutboxFile> Files { get; set; } = [];
 }

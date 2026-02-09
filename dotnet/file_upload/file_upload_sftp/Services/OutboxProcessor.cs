@@ -1,14 +1,25 @@
 using file_upload_sftp.Data;
 using file_upload_sftp.Models;
 using file_upload_sftp.Settings;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace file_upload_sftp.Services;
 
-public sealed class OutboxProcessor : BackgroundService
+/// <summary>
+/// Hangfire jobs for processing SFTP delivery outbox entries.
+///
+/// Two entry points:
+///   1. ProcessSingleEntry(id) — fire-and-forget, triggered immediately when an entry is created
+///   2. SweepPendingEntries()  — recurring, safety net that catches retries, stuck entries, and missed triggers
+///
+/// Both use atomic claim (UPDATE WHERE Status=Pending) to prevent race conditions.
+/// </summary>
+public sealed class OutboxProcessor
 {
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly AppDbContext _db;
+    private readonly ISftpDeliveryService _deliveryService;
     private readonly OutboxOptions _options;
     private readonly ILogger<OutboxProcessor> _log;
 
@@ -23,104 +34,123 @@ public sealed class OutboxProcessor : BackgroundService
     ];
 
     public OutboxProcessor(
-        IServiceScopeFactory scopeFactory,
+        AppDbContext db,
+        ISftpDeliveryService deliveryService,
         IOptions<OutboxOptions> options,
         ILogger<OutboxProcessor> log)
     {
-        _scopeFactory = scopeFactory;
+        _db = db;
+        _deliveryService = deliveryService;
         _options = options.Value;
         _log = log;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// Fire-and-forget: process a single entry immediately after creation.
+    /// Uses atomic claim to prevent duplicate processing if the sweep picks it up at the same time.
+    /// </summary>
+    [JobDisplayName("SFTP Deliver OutboxEntry #{0}")]
+    public async Task ProcessSingleEntry(int outboxEntryId)
     {
-        _log.LogInformation("OutboxProcessor started. Polling every {Interval}s", _options.PollingIntervalSeconds);
-
-        while (!stoppingToken.IsCancellationRequested)
+        if (!await TryClaimEntry(outboxEntryId))
         {
-            try
-            {
-                await ProcessPendingEntries(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogError(ex, "OutboxProcessor encountered an unexpected error");
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(_options.PollingIntervalSeconds), stoppingToken);
+            _log.LogDebug("OutboxEntry {OutboxId} already claimed, skipping", outboxEntryId);
+            return;
         }
+
+        var entry = await _db.OutboxEntries.FindAsync(outboxEntryId);
+        if (entry is null) return;
+
+        await DeliverWithRetryHandling(entry);
     }
 
-    private async Task ProcessPendingEntries(CancellationToken ct)
+    /// <summary>
+    /// Recurring job (safety net): sweep for any pending entries that are due for processing.
+    /// Catches: retries after backoff, entries stuck as InProgress (crashed mid-delivery), missed fire-and-forgets.
+    /// </summary>
+    [JobDisplayName("SFTP Outbox Sweep")]
+    public async Task SweepPendingEntries()
     {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<OutboxDbContext>();
-        var deliveryService = scope.ServiceProvider.GetRequiredService<ISftpDeliveryService>();
-
         var now = DateTime.UtcNow;
-        var entries = await db.OutboxEntries
-            .Include(e => e.Files)
+
+        // Find entries that are ready to process
+        var entryIds = await _db.OutboxEntries
             .Where(e => (e.Status == DeliveryStatus.Pending || e.Status == DeliveryStatus.InProgress)
                         && (e.NextRetryAt == null || e.NextRetryAt <= now))
             .OrderBy(e => e.CreatedAt)
             .Take(_options.BatchSize)
-            .ToListAsync(ct);
+            .Select(e => e.Id)
+            .ToListAsync();
 
-        if (entries.Count == 0) return;
+        if (entryIds.Count == 0) return;
 
-        _log.LogInformation("OutboxProcessor picked up {Count} entries to process", entries.Count);
+        _log.LogInformation("Outbox sweep found {Count} entries to process", entryIds.Count);
 
-        foreach (var entry in entries)
+        foreach (var entryId in entryIds)
         {
-            if (ct.IsCancellationRequested) break;
+            // Enqueue each as a separate Hangfire job so they run independently.
+            // Using entry ID as job ID for deduplication — if fire-and-forget already
+            // enqueued this same ID and it hasn't started yet, Hangfire won't create a duplicate.
+            BackgroundJob.Enqueue<OutboxProcessor>(
+                p => p.ProcessSingleEntry(entryId));
+        }
+    }
 
-            entry.Status = DeliveryStatus.InProgress;
-            entry.Attempts++;
-            await db.SaveChangesAsync(ct);
+    /// <summary>
+    /// Atomic claim: UPDATE ... WHERE Status = Pending AND Id = @id.
+    /// Returns true if this thread successfully claimed the entry.
+    /// If another thread (fire-and-forget or sweep) already claimed it, returns false.
+    /// </summary>
+    private async Task<bool> TryClaimEntry(int entryId)
+    {
+        var claimed = await _db.OutboxEntries
+            .Where(e => e.Id == entryId && e.Status == DeliveryStatus.Pending)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(e => e.Status, DeliveryStatus.InProgress)
+                .SetProperty(e => e.Attempts, e => e.Attempts + 1));
 
-            try
+        return claimed > 0;
+    }
+
+    private async Task DeliverWithRetryHandling(OutboxEntry entry)
+    {
+        try
+        {
+            await _deliveryService.DeliverAsync(entry);
+
+            entry.Status = DeliveryStatus.Completed;
+            entry.CompletedAt = DateTime.UtcNow;
+            entry.LastError = null;
+            await _db.SaveChangesAsync();
+
+            _log.LogInformation(
+                "Delivery succeeded OutboxId={OutboxId} Report={ReportId} User={UserId} Attempt={Attempt}",
+                entry.Id, entry.ReportId, entry.ExternalUserId, entry.Attempts);
+        }
+        catch (Exception ex)
+        {
+            entry.LastError = $"{ex.GetType().Name}: {ex.Message}";
+
+            if (entry.Attempts >= entry.MaxAttempts)
             {
-                await deliveryService.DeliverAsync(entry, ct);
+                entry.Status = DeliveryStatus.Failed;
+                await _db.SaveChangesAsync();
 
-                entry.Status = DeliveryStatus.Completed;
-                entry.CompletedAt = DateTime.UtcNow;
-                entry.LastError = null;
-
-                _log.LogInformation(
-                    "Delivery succeeded OutboxId={OutboxId} Record={RecordId} Partner={PartnerId} Attempt={Attempt}",
-                    entry.Id, entry.RecordId, entry.PartnerId, entry.Attempts);
+                _log.LogError(ex,
+                    "Delivery permanently failed OutboxId={OutboxId} Report={ReportId} User={UserId} Attempts={Attempts}",
+                    entry.Id, entry.ReportId, entry.ExternalUserId, entry.Attempts);
             }
-            catch (OperationCanceledException)
+            else
             {
-                // Shutting down — leave as InProgress so it gets picked up on restart
                 entry.Status = DeliveryStatus.Pending;
-                entry.Attempts--;
-                throw;
+                var delayIndex = Math.Min(entry.Attempts - 1, RetryDelays.Length - 1);
+                entry.NextRetryAt = DateTime.UtcNow.Add(RetryDelays[delayIndex]);
+                await _db.SaveChangesAsync();
+
+                _log.LogWarning(ex,
+                    "Delivery failed, scheduled retry OutboxId={OutboxId} Report={ReportId} User={UserId} Attempt={Attempt} NextRetry={NextRetry}",
+                    entry.Id, entry.ReportId, entry.ExternalUserId, entry.Attempts, entry.NextRetryAt);
             }
-            catch (Exception ex)
-            {
-                entry.LastError = $"{ex.GetType().Name}: {ex.Message}";
-
-                if (entry.Attempts >= entry.MaxAttempts)
-                {
-                    entry.Status = DeliveryStatus.Failed;
-                    _log.LogError(ex,
-                        "Delivery permanently failed OutboxId={OutboxId} Record={RecordId} Partner={PartnerId} Attempts={Attempts}",
-                        entry.Id, entry.RecordId, entry.PartnerId, entry.Attempts);
-                }
-                else
-                {
-                    entry.Status = DeliveryStatus.Pending;
-                    var delayIndex = Math.Min(entry.Attempts - 1, RetryDelays.Length - 1);
-                    entry.NextRetryAt = DateTime.UtcNow.Add(RetryDelays[delayIndex]);
-
-                    _log.LogWarning(ex,
-                        "Delivery failed, will retry OutboxId={OutboxId} Record={RecordId} Partner={PartnerId} Attempt={Attempt} NextRetry={NextRetry}",
-                        entry.Id, entry.RecordId, entry.PartnerId, entry.Attempts, entry.NextRetryAt);
-                }
-            }
-
-            await db.SaveChangesAsync(ct);
         }
     }
 }

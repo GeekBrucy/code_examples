@@ -1,4 +1,3 @@
-using System.Text.Json;
 using file_upload_sftp.Data;
 using file_upload_sftp.Dtos;
 using file_upload_sftp.Models;
@@ -6,113 +5,123 @@ using file_upload_sftp.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
-namespace file_upload_sftp.Controllers
+namespace file_upload_sftp.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class SFTPController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class SFTPController : ControllerBase
+    private readonly IDistributionService _distribution;
+    private readonly AppDbContext _db;
+
+    public SFTPController(IDistributionService distribution, AppDbContext db)
     {
-        private readonly ISftpService _uploader;
-        private readonly IDistributionService _distribution;
-        private readonly OutboxDbContext _db;
+        _distribution = distribution;
+        _db = db;
+    }
 
-        public SFTPController(ISftpService uploader, IDistributionService distribution, OutboxDbContext db)
+    // --- Finalize a report (triggers automatic SFTP distribution to referred users) ---
+
+    [HttpPost("reports/{reportId:int}/finalise")]
+    public async Task<IActionResult> FinaliseReport(int reportId, CancellationToken ct)
+    {
+        var report = await _db.Reports.FindAsync([reportId], ct);
+        if (report is null)
+            return NotFound(new { message = $"Report {reportId} not found." });
+
+        if (report.Status == "Finalised")
+            return BadRequest(new { message = "Report is already finalised." });
+
+        report.Status = "Finalised";
+        report.FinalisedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        // Enqueue SFTP delivery for all referred external users
+        var entryIds = await _distribution.EnqueueForFinalisedReportAsync(reportId, ct);
+
+        return Ok(new
         {
-            _uploader = uploader;
-            _distribution = distribution;
-            _db = db;
-        }
+            message = "Report finalised",
+            reportId,
+            sftpDeliveries = entryIds.Count,
+            outboxEntryIds = entryIds
+        });
+    }
 
-        // --- Legacy endpoint (kept for backward compat) ---
+    // --- Manual refer: distribute to additional external users ---
 
-        [HttpPost("{partnerId}")]
-        public async Task<IActionResult> ExportToPartner(string partnerId, [FromBody] object payload, CancellationToken ct)
+    [HttpPost("reports/refer")]
+    public async Task<IActionResult> ManualRefer([FromBody] ManualReferRequest request, CancellationToken ct)
+    {
+        var entryIds = await _distribution.EnqueueForExternalUsersAsync(
+            request.ReportId, request.ExternalUserIds, ct);
+
+        return Accepted(new
         {
-            var json = JsonSerializer.Serialize(payload);
+            message = "Manual referral enqueued",
+            reportId = request.ReportId,
+            externalUserIds = request.ExternalUserIds,
+            outboxEntryIds = entryIds
+        });
+    }
 
-            var fileName = $"event_{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.json";
-            var remoteDir = $"/outbound/{partnerId}";
+    // --- Audit endpoints ---
 
-            await _uploader.UploadJsonAsync(new SftpUploadRequest(remoteDir, fileName, json), ct);
+    [HttpGet("outbox")]
+    public async Task<IActionResult> QueryOutbox(
+        [FromQuery] int? reportId,
+        [FromQuery] string? status,
+        [FromQuery] int? externalUserId,
+        CancellationToken ct)
+    {
+        var query = _db.OutboxEntries.AsNoTracking().AsQueryable();
 
-            return Ok(new { partnerId, fileName });
-        }
+        if (reportId.HasValue)
+            query = query.Where(e => e.ReportId == reportId.Value);
 
-        // --- New: Reliable distribution with outbox ---
+        if (externalUserId.HasValue)
+            query = query.Where(e => e.ExternalUserId == externalUserId.Value);
 
-        [HttpPost("distribute")]
-        public async Task<IActionResult> Distribute([FromBody] DistributionRequest request, CancellationToken ct)
-        {
-            var entryIds = await _distribution.EnqueueAsync(request, ct);
+        if (Enum.TryParse<DeliveryStatus>(status, ignoreCase: true, out var parsedStatus))
+            query = query.Where(e => e.Status == parsedStatus);
 
-            return Accepted(new
+        var entries = await query
+            .OrderByDescending(e => e.CreatedAt)
+            .Take(100)
+            .Select(e => new
             {
-                message = "Distribution enqueued",
-                recordId = request.RecordId,
-                partnerIds = request.PartnerIds,
-                outboxEntryIds = entryIds
-            });
-        }
+                e.Id,
+                e.ReportId,
+                e.ExternalUserId,
+                Status = e.Status.ToString(),
+                e.Attempts,
+                e.MaxAttempts,
+                e.LastError,
+                e.NextRetryAt,
+                e.CreatedAt,
+                e.CompletedAt
+            })
+            .ToListAsync(ct);
 
-        // --- Audit endpoints ---
+        return Ok(entries);
+    }
 
-        [HttpGet("outbox")]
-        public async Task<IActionResult> QueryOutbox(
-            [FromQuery] string? recordId,
-            [FromQuery] string? status,
-            [FromQuery] string? partnerId,
-            CancellationToken ct)
-        {
-            var query = _db.OutboxEntries.AsNoTracking().AsQueryable();
+    [HttpPost("outbox/{id:int}/retry")]
+    public async Task<IActionResult> RetryEntry(int id, CancellationToken ct)
+    {
+        var entry = await _db.OutboxEntries.FindAsync([id], ct);
+        if (entry is null)
+            return NotFound();
 
-            if (!string.IsNullOrEmpty(recordId))
-                query = query.Where(e => e.RecordId == recordId);
+        if (entry.Status != DeliveryStatus.Failed)
+            return BadRequest(new { message = $"Entry is {entry.Status}, not Failed. Only failed entries can be retried." });
 
-            if (!string.IsNullOrEmpty(partnerId))
-                query = query.Where(e => e.PartnerId == partnerId);
+        entry.Status = DeliveryStatus.Pending;
+        entry.Attempts = 0;
+        entry.NextRetryAt = DateTime.UtcNow;
+        entry.LastError = null;
+        await _db.SaveChangesAsync(ct);
 
-            if (Enum.TryParse<DeliveryStatus>(status, ignoreCase: true, out var parsedStatus))
-                query = query.Where(e => e.Status == parsedStatus);
-
-            var entries = await query
-                .OrderByDescending(e => e.CreatedAt)
-                .Take(100)
-                .Select(e => new
-                {
-                    e.Id,
-                    e.RecordId,
-                    e.PartnerId,
-                    Status = e.Status.ToString(),
-                    e.Attempts,
-                    e.MaxAttempts,
-                    e.LastError,
-                    e.NextRetryAt,
-                    e.CreatedAt,
-                    e.CompletedAt,
-                    FileCount = e.Files.Count
-                })
-                .ToListAsync(ct);
-
-            return Ok(entries);
-        }
-
-        [HttpPost("outbox/{id:int}/retry")]
-        public async Task<IActionResult> RetryEntry(int id, CancellationToken ct)
-        {
-            var entry = await _db.OutboxEntries.FindAsync([id], ct);
-            if (entry is null)
-                return NotFound();
-
-            if (entry.Status != DeliveryStatus.Failed)
-                return BadRequest(new { message = $"Entry is {entry.Status}, not Failed. Only failed entries can be retried." });
-
-            entry.Status = DeliveryStatus.Pending;
-            entry.Attempts = 0;
-            entry.NextRetryAt = DateTime.UtcNow;
-            entry.LastError = null;
-            await _db.SaveChangesAsync(ct);
-
-            return Ok(new { message = "Entry re-queued for retry", outboxId = id });
-        }
+        return Ok(new { message = "Entry re-queued for retry", outboxId = id });
     }
 }

@@ -1,8 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using file_upload_sftp.Data;
 using file_upload_sftp.Models;
 using file_upload_sftp.Settings;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Renci.SshNet;
 
@@ -16,42 +18,83 @@ public interface ISftpDeliveryService
 public sealed class SftpDeliveryService : ISftpDeliveryService
 {
     private readonly SftpOptions _sftp;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<SftpDeliveryService> _log;
 
-    public SftpDeliveryService(IOptions<SftpOptions> sftp, ILogger<SftpDeliveryService> log)
+    public SftpDeliveryService(
+        IOptions<SftpOptions> sftp,
+        IServiceScopeFactory scopeFactory,
+        ILogger<SftpDeliveryService> log)
     {
         _sftp = sftp.Value;
+        _scopeFactory = scopeFactory;
         _log = log;
     }
 
     public async Task DeliverAsync(OutboxEntry entry, CancellationToken ct = default)
     {
+        // Read report + attachments from the existing database
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var report = await db.Reports
+            .Include(r => r.Attachments)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == entry.ReportId, ct)
+            ?? throw new InvalidOperationException($"Report {entry.ReportId} not found — may have been deleted.");
+
+        var externalUser = await db.ExternalUsers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == entry.ExternalUserId, ct)
+            ?? throw new InvalidOperationException($"External user {entry.ExternalUserId} not found.");
+
+        var sftpDir = externalUser.SftpDirectory;
+
         await Task.Run(() =>
         {
             using var client = new SftpClient(_sftp.Host, _sftp.Port, _sftp.Username, _sftp.Password);
             client.Connect();
             try
             {
-                var remoteDir = $"/outbound/{entry.PartnerId}/{entry.RecordId}";
+                var remoteDir = $"/outbound/{sftpDir}/report_{report.Id}";
                 EnsureDirectoryExists(client, remoteDir);
 
                 var uploadedPendingFiles = new List<string>();
+                var manifestFiles = new List<ManifestFileEntry>();
 
-                // Phase 1: Upload all files with .pending suffix
-                foreach (var file in entry.Files)
+                // Phase 1: Upload report JSON with .pending suffix
+                var reportBytes = Encoding.UTF8.GetBytes(report.JsonContent);
+                var reportFileName = $"report_{report.Id}.json";
+                var reportPendingPath = $"{remoteDir}/{reportFileName}.pending";
+                using (var ms = new MemoryStream(reportBytes))
                 {
-                    var pendingPath = $"{remoteDir}/{file.FileName}.pending";
-                    using var ms = new MemoryStream(file.Content);
+                    client.UploadFile(ms, reportPendingPath, canOverride: true);
+                }
+                uploadedPendingFiles.Add(reportPendingPath);
+                manifestFiles.Add(new ManifestFileEntry(reportFileName, reportBytes.Length, "application/json",
+                    Convert.ToHexString(SHA256.HashData(reportBytes)).ToLowerInvariant()));
+
+                _log.LogInformation(
+                    "Uploaded pending report Report={ReportId} User={UserId} SftpDir={SftpDir} File={FileName} Size={Size}",
+                    report.Id, entry.ExternalUserId, sftpDir, reportFileName, reportBytes.Length);
+
+                // Phase 2: Upload each attachment with .pending suffix
+                foreach (var attachment in report.Attachments)
+                {
+                    var pendingPath = $"{remoteDir}/{attachment.FileName}.pending";
+                    using var ms = new MemoryStream(attachment.Content);
                     client.UploadFile(ms, pendingPath, canOverride: true);
                     uploadedPendingFiles.Add(pendingPath);
+                    manifestFiles.Add(new ManifestFileEntry(attachment.FileName, attachment.Content.Length, attachment.ContentType,
+                        Convert.ToHexString(SHA256.HashData(attachment.Content)).ToLowerInvariant()));
 
                     _log.LogInformation(
-                        "Uploaded pending file Record={RecordId} Partner={PartnerId} File={FileName} Size={Size}",
-                        entry.RecordId, entry.PartnerId, file.FileName, file.Content.Length);
+                        "Uploaded pending attachment Report={ReportId} User={UserId} File={FileName} Size={Size}",
+                        report.Id, entry.ExternalUserId, attachment.FileName, attachment.Content.Length);
                 }
 
-                // Phase 2: Generate and upload manifest with .pending suffix
-                var manifest = BuildManifest(entry);
+                // Phase 3: Generate and upload manifest with .pending suffix
+                var manifest = BuildManifest(report.Id, sftpDir, manifestFiles);
                 var manifestPendingPath = $"{remoteDir}/_manifest.json.pending";
                 using (var manifestStream = new MemoryStream(Encoding.UTF8.GetBytes(manifest)))
                 {
@@ -59,23 +102,22 @@ public sealed class SftpDeliveryService : ISftpDeliveryService
                 }
                 uploadedPendingFiles.Add(manifestPendingPath);
 
-                // Phase 3: Rename all files to final names (atomic commit)
+                // Phase 4: Rename all .pending files to final names (atomic commit)
                 foreach (var pendingPath in uploadedPendingFiles)
                 {
-                    var finalPath = pendingPath[..^".pending".Length]; // strip .pending
+                    var finalPath = pendingPath[..^".pending".Length];
                     if (client.Exists(finalPath))
                         client.DeleteFile(finalPath);
                     client.RenameFile(pendingPath, finalPath);
                 }
 
                 _log.LogInformation(
-                    "Delivery complete Record={RecordId} Partner={PartnerId} FileCount={FileCount}",
-                    entry.RecordId, entry.PartnerId, entry.Files.Count);
+                    "Delivery complete Report={ReportId} User={UserId} SftpDir={SftpDir} FileCount={FileCount}",
+                    report.Id, entry.ExternalUserId, sftpDir, 1 + report.Attachments.Count);
             }
             catch
             {
-                // Best-effort cleanup of .pending files on failure
-                CleanupPendingFiles(client, entry);
+                CleanupPendingFiles(client, report.Id, sftpDir);
                 throw;
             }
             finally
@@ -85,30 +127,32 @@ public sealed class SftpDeliveryService : ISftpDeliveryService
         }, ct);
     }
 
-    private string BuildManifest(OutboxEntry entry)
+    private record ManifestFileEntry(string Name, long Size, string ContentType, string Sha256);
+
+    private static string BuildManifest(int reportId, string sftpDir, List<ManifestFileEntry> files)
     {
         var manifest = new
         {
-            recordId = entry.RecordId,
-            partnerId = entry.PartnerId,
+            reportId,
+            sftpDirectory = sftpDir,
             uploadedAt = DateTime.UtcNow.ToString("o"),
-            files = entry.Files.Select(f => new
+            files = files.Select(f => new
             {
-                name = f.FileName,
-                size = f.Content.Length,
+                name = f.Name,
+                size = f.Size,
                 contentType = f.ContentType,
-                sha256 = Convert.ToHexString(SHA256.HashData(f.Content)).ToLowerInvariant()
+                sha256 = f.Sha256
             }).ToList()
         };
 
         return JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
     }
 
-    private void CleanupPendingFiles(SftpClient client, OutboxEntry entry)
+    private void CleanupPendingFiles(SftpClient client, int reportId, string sftpDir)
     {
         if (!client.IsConnected) return;
 
-        var remoteDir = $"/outbound/{entry.PartnerId}/{entry.RecordId}";
+        var remoteDir = $"/outbound/{sftpDir}/report_{reportId}";
         try
         {
             if (!client.Exists(remoteDir)) return;
@@ -119,16 +163,16 @@ public sealed class SftpDeliveryService : ISftpDeliveryService
                 {
                     client.DeleteFile(file.FullName);
                     _log.LogWarning(
-                        "Cleaned up pending file Record={RecordId} Partner={PartnerId} File={File}",
-                        entry.RecordId, entry.PartnerId, file.Name);
+                        "Cleaned up pending file Report={ReportId} SftpDir={SftpDir} File={File}",
+                        reportId, sftpDir, file.Name);
                 }
             }
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex,
-                "Failed to cleanup pending files Record={RecordId} Partner={PartnerId}",
-                entry.RecordId, entry.PartnerId);
+                "Failed to cleanup pending files Report={ReportId} SftpDir={SftpDir}",
+                reportId, sftpDir);
         }
     }
 
@@ -146,7 +190,6 @@ public sealed class SftpDeliveryService : ISftpDeliveryService
             }
             catch (Renci.SshNet.Common.SshException)
             {
-                // Race condition: another process created it between Exists and Create
                 if (!client.Exists(path)) throw;
             }
         }

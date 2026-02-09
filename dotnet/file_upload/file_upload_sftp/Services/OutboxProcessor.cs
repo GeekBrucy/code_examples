@@ -10,11 +10,12 @@ namespace file_upload_sftp.Services;
 /// <summary>
 /// Hangfire jobs for processing SFTP delivery outbox entries.
 ///
-/// Two entry points:
+/// Three entry points:
 ///   1. ProcessSingleEntry(id) — fire-and-forget, triggered immediately when an entry is created
-///   2. SweepPendingEntries()  — recurring, safety net that catches retries, stuck entries, and missed triggers
+///   2. SweepPendingEntries()  — recurring (every minute), catches retries, stuck entries, and missed triggers
+///   3. ResetFailedEntries()   — recurring (daily), resets Failed entries for another round of attempts
 ///
-/// Both use atomic claim (UPDATE WHERE Status=Pending) to prevent race conditions.
+/// ProcessSingleEntry uses atomic claim (UPDATE WHERE Status=Pending) to prevent race conditions.
 /// </summary>
 public sealed class OutboxProcessor
 {
@@ -93,6 +94,40 @@ public sealed class OutboxProcessor
             // enqueued this same ID and it hasn't started yet, Hangfire won't create a duplicate.
             BackgroundJob.Enqueue<OutboxProcessor>(
                 p => p.ProcessSingleEntry(entryId));
+        }
+    }
+
+    /// <summary>
+    /// Recurring job (daily): reset Failed entries that haven't exceeded their max reset count.
+    /// Gives transient infra failures another chance without human intervention.
+    /// After MaxResets (default 3 = 15 total attempts over ~3 days), the entry stays Failed permanently.
+    /// </summary>
+    [JobDisplayName("SFTP Outbox Daily Reset")]
+    public async Task ResetFailedEntries()
+    {
+        var resetCount = await _db.OutboxEntries
+            .Where(e => e.Status == DeliveryStatus.Failed && e.ResetCount < e.MaxResets)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(e => e.Status, DeliveryStatus.Pending)
+                .SetProperty(e => e.Attempts, 0)
+                .SetProperty(e => e.ResetCount, e => e.ResetCount + 1)
+                .SetProperty(e => e.NextRetryAt, DateTime.UtcNow)
+                .SetProperty(e => e.LastError, e => $"[Auto-reset #{e.ResetCount + 1}] {e.LastError}"));
+
+        if (resetCount > 0)
+        {
+            _log.LogInformation("Daily reset: re-queued {Count} failed entries for retry", resetCount);
+        }
+
+        // Log permanently failed entries for visibility
+        var permanentlyFailed = await _db.OutboxEntries
+            .CountAsync(e => e.Status == DeliveryStatus.Failed && e.ResetCount >= e.MaxResets);
+
+        if (permanentlyFailed > 0)
+        {
+            _log.LogWarning(
+                "Daily reset: {Count} entries permanently failed (exceeded {MaxResets} resets) — manual intervention required",
+                permanentlyFailed, 3);
         }
     }
 

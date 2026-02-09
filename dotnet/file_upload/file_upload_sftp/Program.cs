@@ -63,7 +63,13 @@ app.MapControllers();
 RecurringJob.AddOrUpdate<OutboxProcessor>(
     "outbox-sweep",
     p => p.SweepPendingEntries(),
-    "* * * * *"); // every minute (adjustable via cron)
+    "* * * * *"); // every minute
+
+// Daily self-healing — resets Failed entries for another round of attempts (up to MaxResets times)
+RecurringJob.AddOrUpdate<OutboxProcessor>(
+    "outbox-daily-reset",
+    p => p.ResetFailedEntries(),
+    "0 6 * * *"); // 6 AM daily
 
 app.Run();
 

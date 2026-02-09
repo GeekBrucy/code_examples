@@ -22,6 +22,8 @@ public class OutboxEntry
     public int MaxAttempts { get; set; } = 5;
     public string? LastError { get; set; }
     public DateTime? NextRetryAt { get; set; }
+    public int ResetCount { get; set; } // how many times the daily job has reset this entry
+    public int MaxResets { get; set; } = 3; // after 3 resets (15 total attempts), stays Failed permanently
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }
 }

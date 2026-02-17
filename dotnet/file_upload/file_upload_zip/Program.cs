@@ -1,10 +1,13 @@
+using file_upload_zip.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+
+// Register zip services — one per library for comparison.
+builder.Services.AddSingleton<SystemIoCompressionZipService>();
+builder.Services.AddSingleton<SharpZipLibZipService>();
 
 var app = builder.Build();
 

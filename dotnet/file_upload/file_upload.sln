@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload_sftp", "file_up
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload_sftp_consumer", "file_upload_sftp_consumer\file_upload_sftp_consumer.csproj", "{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload_sftp.Tests", "file_upload_sftp.Tests\file_upload_sftp.Tests.csproj", "{C0930C35-4D8C-45B7-BFE4-608D1EA58437}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "file_upload_zip", "file_upload_zip\file_upload_zip.csproj", "{93DEA4BC-E50F-4216-A1F6-8494F949D85E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +34,13 @@ Global
 		{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9C5BA06A-0DD0-47F2-A99F-B0AC971644C2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C0930C35-4D8C-45B7-BFE4-608D1EA58437}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C0930C35-4D8C-45B7-BFE4-608D1EA58437}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C0930C35-4D8C-45B7-BFE4-608D1EA58437}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C0930C35-4D8C-45B7-BFE4-608D1EA58437}.Release|Any CPU.Build.0 = Release|Any CPU
+		{93DEA4BC-E50F-4216-A1F6-8494F949D85E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{93DEA4BC-E50F-4216-A1F6-8494F949D85E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{93DEA4BC-E50F-4216-A1F6-8494F949D85E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{93DEA4BC-E50F-4216-A1F6-8494F949D85E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

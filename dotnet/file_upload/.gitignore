@@ -1,3 +1,6 @@
 temp/
 uploads/
 docker-volume/
+*.db
+*.db-shm
+*.db-wal

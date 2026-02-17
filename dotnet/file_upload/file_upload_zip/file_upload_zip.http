@@ -1,0 +1,6 @@
+@file_upload_zip_HostAddress = http://localhost:5032
+
+GET {{file_upload_zip_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

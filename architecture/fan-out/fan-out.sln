@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "api", "api\api.csproj", "{34571B2A-B1FE-4D29-920D-9141657A00A3}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "api.hangfire", "api.hangfire\api.hangfire.csproj", "{CC8089A6-A8BB-4B41-BAE2-394CAD488593}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{34571B2A-B1FE-4D29-920D-9141657A00A3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{34571B2A-B1FE-4D29-920D-9141657A00A3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{34571B2A-B1FE-4D29-920D-9141657A00A3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CC8089A6-A8BB-4B41-BAE2-394CAD488593}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CC8089A6-A8BB-4B41-BAE2-394CAD488593}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CC8089A6-A8BB-4B41-BAE2-394CAD488593}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CC8089A6-A8BB-4B41-BAE2-394CAD488593}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

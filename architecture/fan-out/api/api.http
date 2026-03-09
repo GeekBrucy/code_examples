@@ -1,6 +1,34 @@
 @api_HostAddress = http://localhost:5221
 
-GET {{api_HostAddress}}/weatherforecast/
-Accept: application/json
+### Fan-out Example 1: Task.WhenAll (all workers run in parallel, results aggregated)
+POST {{api_HostAddress}}/api/fanout
+Content-Type: application/json
+
+{
+  "workerIds": [1, 2, 3, 4, 5]
+}
+
+###
+
+### Fan-out Example 1b: Task.WhenAny (returns as soon as the fastest worker finishes)
+POST {{api_HostAddress}}/api/fanout/first
+Content-Type: application/json
+
+{
+  "workerIds": [1, 2, 3, 4, 5]
+}
+
+###
+
+### Fan-out Example 2: Channel-based (enqueue items; background consumers process in parallel)
+### Watch the API logs to see 3 consumers picking up items concurrently
+POST {{api_HostAddress}}/api/channel/enqueue
+Content-Type: application/json
+
+{
+  "count": 9,
+  "payload": "hello-world",
+  "processingDelayMs": 400
+}
 
 ###

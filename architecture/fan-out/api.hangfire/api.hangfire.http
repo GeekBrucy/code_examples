@@ -1,0 +1,19 @@
+@api.hangfire_HostAddress = http://localhost:5212
+
+### Fan-out: enqueue N worker jobs in parallel
+### Returns immediately with job IDs — jobs run in background
+### Browse /hangfire to watch them execute
+POST {{api.hangfire_HostAddress}}/api/fanout
+Content-Type: application/json
+
+{
+  "workerIds": [1, 2, 3, 4, 5]
+}
+
+###
+
+### Check the state of a single job (replace JOB_ID with an id from the fan-out response)
+GET {{api.hangfire_HostAddress}}/api/fanout/status/JOB_ID
+Accept: application/json
+
+###

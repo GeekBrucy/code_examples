@@ -1,7 +1,6 @@
 using api.hangfire.Jobs;
 using Hangfire;
 using Hangfire.Storage;
-using Hangfire.Storage.Monitoring;
 using Microsoft.AspNetCore.Mvc;
 
 namespace api.hangfire.Controllers;
@@ -32,15 +31,16 @@ public class FanOutController : ControllerBase
     [HttpPost]
     public IActionResult FanOut([FromBody] FanOutRequest request)
     {
-        if (request.WorkerIds.Count == 0)
-            return BadRequest("Provide at least one worker ID.");
+        if (request.Orders.Count == 0)
+            return BadRequest("Provide at least one order.");
 
         // A shared ID to correlate all jobs in this batch (visible in logs)
         var batchId = Guid.NewGuid().ToString("N")[..8];
 
-        // Fan-out: enqueue all jobs at once — they run in parallel on available worker threads
-        var jobIds = request.WorkerIds
-            .Select(workerId => _jobClient.Enqueue<WorkerJob>(job => job.ProcessAsync(workerId, batchId)))
+        // Fan-out: enqueue all jobs at once — they run in parallel on available worker threads.
+        // Hangfire serializes each OrderEntity to JSON in SQL Server.
+        var jobIds = request.Orders
+            .Select(order => _jobClient.Enqueue<WorkerJob>(job => job.ProcessAsync(order, batchId)))
             .ToList();
 
         // Response is immediate — jobs are queued, not yet finished
@@ -72,6 +72,6 @@ public class FanOutController : ControllerBase
     }
 }
 
-public record FanOutRequest(List<int> WorkerIds);
+public record FanOutRequest(List<OrderEntity> Orders);
 
 public record FanOutResponse(string BatchId, List<string> JobIds, string Message);

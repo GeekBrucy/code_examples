@@ -3,11 +3,17 @@
 ### Fan-out: enqueue N worker jobs in parallel
 ### Returns immediately with job IDs — jobs run in background
 ### Browse /hangfire to watch them execute
+### Fan-out: submit 3 orders — each order processed by an independent job.
+### If the same order ID is already being processed, the duplicate job will retry until the first finishes.
 POST {{api.hangfire_HostAddress}}/api/fanout
 Content-Type: application/json
 
 {
-  "workerIds": [1, 2, 3, 4, 5]
+  "orders": [
+    { "id": 1, "customerName": "Alice", "amount": 99.99 },
+    { "id": 2, "customerName": "Bob",   "amount": 149.50 },
+    { "id": 3, "customerName": "Carol", "amount": 19.00 }
+  ]
 }
 
 ###

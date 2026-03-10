@@ -70,8 +70,38 @@ public class FanOutController : ControllerBase
             History = details.History.Select(h => new { h.StateName, h.CreatedAt })
         });
     }
+
+    /// <summary>
+    /// Multi-stage pipeline per entity:
+    ///   WorkflowJob  →  Stage1 (ContinueJobWith)  →  Stage2 (ContinueJobWith)
+    ///                          ↓ fans out
+    ///                   SftpUploadJob × N  →  last one enqueues Stage3CleanupJob
+    ///
+    /// Duplicate protection: WorkflowJob holds a distributed lock for the entity.
+    /// If the same entityId is submitted again while the pipeline is running,
+    /// the new WorkflowJob fails to acquire the lock and is retried later.
+    /// </summary>
+    [HttpPost("pipeline")]
+    public IActionResult Pipeline([FromBody] PipelineRequest request)
+    {
+        var jobIds = request.EntityIds
+            .Select(entityId => new
+            {
+                EntityId = entityId,
+                WorkflowJobId = _jobClient.Enqueue<WorkflowJob>(job => job.StartAsync(entityId))
+            })
+            .ToList();
+
+        return Accepted(new
+        {
+            Message = $"Pipeline started for {jobIds.Count} entities. Track progress at /hangfire.",
+            Jobs = jobIds
+        });
+    }
 }
 
 public record FanOutRequest(List<OrderEntity> Orders);
 
 public record FanOutResponse(string BatchId, List<string> JobIds, string Message);
+
+public record PipelineRequest(List<int> EntityIds);

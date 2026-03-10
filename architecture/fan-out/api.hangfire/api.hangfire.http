@@ -23,3 +23,14 @@ GET {{api.hangfire_HostAddress}}/api/fanout/status/JOB_ID
 Accept: application/json
 
 ###
+
+### Two-stage pipeline: Transform → Prepare+Zip → Fan-out SFTP uploads
+### Each entity gets its own TransformJob → PrepareJob → N SftpUploadJobs
+POST {{api.hangfire_HostAddress}}/api/fanout/pipeline
+Content-Type: application/json
+
+{
+  "entityIds": [101, 102, 103]
+}
+
+###

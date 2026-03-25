@@ -4,34 +4,32 @@ using Hangfire.Storage;
 namespace api.hangfire.Jobs;
 
 /// <summary>
-/// Orchestrates the full pipeline for one entity:
-///   1. Duplicate check — if a workflow for this entity is already running, fail fast and retry later
-///   2. Compute shared file paths upfront (required so ContinueJobWith can pass them to each stage)
-///   3. Chain Stage 1 → Stage 2 using ContinueJobWith (free Hangfire feature)
-///   4. Stage 3 (cleanup) is triggered internally by the last SftpUploadJob
+/// All pipeline stages run sequentially inside this single Hangfire job.
+/// Data flows naturally through local variables — no job parameters to pass,
+/// no ContinueJobWith, no counter-based fan-in needed.
 ///
-/// ContinueJobWith vs Hangfire Pro BatchJob:
-///   ContinueJobWith  — free, chains ONE job to ONE successor
-///   BatchJob         — Pro only, fan-out with native fan-in continuation after ALL parallel jobs finish
+/// The fan-out (SFTP uploads) is handled with Task.WhenAll inside this job,
+/// giving parallel execution without spawning separate Hangfire jobs.
 ///
-/// We use ContinueJobWith for the linear Stage 1 → Stage 2 chain.
-/// The fan-in before Stage 3 is handled with a completion counter in Hangfire's set storage.
+/// Trade-off vs. chained separate jobs:
+///   PRO  — much simpler; no coordination plumbing required
+///   CON  — if Stage 3 (cleanup) fails, Hangfire retries the whole job,
+///          including Stage 1 (transform) again. Acceptable when stages are
+///          cheap to re-run; use separate chained jobs when Stage 1 is expensive.
 /// </summary>
 public class WorkflowJob
 {
-    private readonly IBackgroundJobClient _jobClient;
     private readonly JobStorage _jobStorage;
 
     // SFTP destinations — in a real system these would come from config/DB
     private static readonly string[] SftpDestinations = ["sftp-server-au", "sftp-server-us", "sftp-server-eu"];
 
-    public WorkflowJob(IBackgroundJobClient jobClient, JobStorage jobStorage)
+    public WorkflowJob(JobStorage jobStorage)
     {
-        _jobClient = jobClient;
         _jobStorage = jobStorage;
     }
 
-    public Task StartAsync(int entityId)
+    public async Task StartAsync(int entityId)
     {
         // Duplicate check: if a workflow for this entity is already in-flight,
         // AcquireDistributedLock throws → Hangfire retries this job later.
@@ -39,25 +37,38 @@ public class WorkflowJob
         using var connection = _jobStorage.GetConnection();
         using var workflowLock = connection.AcquireDistributedLock(workflowLockKey, timeout: TimeSpan.Zero);
 
-        // File paths are computed here so they can be passed to all stages upfront.
-        // ContinueJobWith sets up the chain before any job runs, so paths must be known now.
-        var jsonPath = $"temp/entity_{entityId}.json";
-        var zipPath  = $"temp/entity_{entityId}.zip";
+        // ── Stage 1: Transform ───────────────────────────────────────────────
+        Console.WriteLine($"[Workflow] [{entityId}] Stage 1 — transforming data...");
+        await Task.Delay(500); // simulate work
+        var transformedData = $"transformed-payload-for-{entityId}"; // result lives in a local variable
+        Console.WriteLine($"[Workflow] [{entityId}] Stage 1 complete.");
 
-        // Chain Stage 1 → Stage 2 (linear, free Hangfire)
-        var stage1Id = _jobClient.Enqueue<Stage1TransformJob>(
-            job => job.TransformAsync(entityId, jsonPath));
+        // ── Stage 2a: Prepare (JSON → zip) ───────────────────────────────────
+        Console.WriteLine($"[Workflow] [{entityId}] Stage 2 — serializing to JSON...");
+        await Task.Delay(100);
+        var zipPath = $"temp/entity_{entityId}.zip";
+        Console.WriteLine($"[Workflow] [{entityId}] Zipping → {zipPath}");
+        await Task.Delay(150);
+        Console.WriteLine($"[Workflow] [{entityId}] Zip ready. Fanning out {SftpDestinations.Length} uploads...");
 
-        _jobClient.ContinueJobWith<Stage2PrepareJob>(
-            stage1Id,
-            job => job.PrepareAndFanOutAsync(entityId, jsonPath, zipPath, SftpDestinations));
+        // ── Stage 2b: Fan-out SFTP uploads (parallel, in-process) ────────────
+        // Task.WhenAll runs all uploads concurrently inside this job.
+        // Each upload gets the zip path directly — no serialization needed.
+        await Task.WhenAll(SftpDestinations.Select(dest => UploadAsync(entityId, zipPath, dest, transformedData)));
 
-        // Stage 3 is NOT chained here — it is enqueued by the last SftpUploadJob.
-        // See SftpUploadJob for the completion counter logic.
+        // ── Stage 3: Cleanup ─────────────────────────────────────────────────
+        Console.WriteLine($"[Workflow] [{entityId}] Stage 3 — cleaning up {zipPath}...");
+        // In real code: File.Delete(zipPath); File.Delete(jsonPath);
+        await Task.Delay(50);
+        Console.WriteLine($"[Workflow] [{entityId}] Pipeline complete.");
+    }
 
-        Console.WriteLine($"[Workflow] [{entityId}] Pipeline scheduled: " +
-                          $"Stage1 → Stage2 → ({SftpDestinations.Length}× SftpUpload) → Stage3Cleanup");
-
-        return Task.CompletedTask;
+    private static async Task UploadAsync(int entityId, string zipPath, string destination, string payload)
+    {
+        Console.WriteLine($"[SftpUpload] [{entityId}] Connecting to {destination}...");
+        await Task.Delay(300);
+        Console.WriteLine($"[SftpUpload] [{entityId}] Uploading {zipPath} to {destination} (payload: {payload[..20]}...)");
+        await Task.Delay(500);
+        Console.WriteLine($"[SftpUpload] [{entityId}] Upload to {destination} complete.");
     }
 }

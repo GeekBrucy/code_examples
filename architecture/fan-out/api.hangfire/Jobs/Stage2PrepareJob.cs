@@ -26,6 +26,10 @@ public class Stage2PrepareJob
     // Hangfire set key that holds the expected upload count (single-element set used as a value store)
     public static string ExpectedUploadsKey(int entityId) => $"uploads-expected:{entityId}";
 
+    // Hangfire set key tracking which destinations have already had a job enqueued.
+    // Used by Stage 2 retry logic to avoid enqueueing duplicates across servers.
+    public static string EnqueuedUploadsKey(int entityId) => $"uploads-enqueued:{entityId}";
+
     public Stage2PrepareJob(IBackgroundJobClient jobClient, JobStorage jobStorage)
     {
         _jobClient = jobClient;
@@ -40,20 +44,36 @@ public class Stage2PrepareJob
         Console.WriteLine($"[Stage2] [{entityId}] Zipping → {zipPath}");
         await Task.Delay(150);
 
-        // Store expected upload count BEFORE enqueuing any upload job.
-        // SftpUploadJob reads this to know when all uploads are done.
         using var connection = _jobStorage.GetConnection();
+
+        // Fan-out lock: ensures that if Stage 2 retries (on this or any other server),
+        // it doesn't enqueue duplicate upload jobs for destinations already enqueued.
+        // Safe across multiple load-balanced servers because the lock lives in SQL Server.
+        using var fanOutLock = connection.AcquireDistributedLock(
+            $"stage2-fanout:{entityId}", TimeSpan.FromSeconds(30));
+
+        // "enqueued-uploads:{entityId}" tracks which destinations already have a job queued.
+        // On retry, we skip destinations already recorded here.
+        var alreadyEnqueued = connection.GetAllItemsFromSet(EnqueuedUploadsKey(entityId));
+        var pending = destinations.Where(d => !alreadyEnqueued.Contains(d)).ToArray();
+
+        // Expected count is the full destination count regardless of retry — upload jobs
+        // that already ran still count toward the completion total.
         using var tx = connection.CreateWriteTransaction();
         tx.AddToSet(ExpectedUploadsKey(entityId), destinations.Length.ToString());
         tx.Commit();
 
-        // Fan-out: one independent Hangfire job per destination
-        Console.WriteLine($"[Stage2] [{entityId}] Fanning out {destinations.Length} upload jobs...");
+        Console.WriteLine($"[Stage2] [{entityId}] Fanning out {pending.Length} upload jobs " +
+                          $"({alreadyEnqueued.Count} already enqueued from prior attempt)...");
 
-        foreach (var destination in destinations)
+        foreach (var destination in pending)
         {
-            _jobClient.Enqueue<SftpUploadJob>(
-                job => job.UploadAsync(entityId, zipPath, destination));
+            _jobClient.Enqueue<SftpUploadJob>(job => job.UploadAsync(entityId, zipPath, destination));
+
+            // Record immediately so a crash mid-loop doesn't re-enqueue on retry
+            using var recordTx = connection.CreateWriteTransaction();
+            recordTx.AddToSet(EnqueuedUploadsKey(entityId), destination);
+            recordTx.Commit();
 
             Console.WriteLine($"[Stage2] [{entityId}] Enqueued upload → {destination}");
         }

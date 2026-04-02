@@ -20,6 +20,7 @@ public class ConsoleNotificationService : INotificationService
         Console.WriteLine($"SMTP:    {_settings.SmtpHost}");
         Console.WriteLine($"Subject: Background job failed — {jobName} (ID: {jobId})");
         Console.WriteLine($"Body:    {exception.Message}");
+        Console.WriteLine($"Retry:   POST /admin/jobs/{jobId}/requeue");
         Console.WriteLine("===========================================");
     }
 }

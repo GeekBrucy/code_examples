@@ -21,10 +21,15 @@ public class NotifyOnFailureFilter : JobFilterAttribute, IApplyStateFilter
         if (context.NewState is not FailedState failedState)
             return;
 
+        // Only notify for jobs explicitly opted in with [NotifyOnFailure].
+        var jobType = context.BackgroundJob.Job.Type;
+        if (jobType.GetCustomAttributes(typeof(NotifyOnFailureAttribute), inherit: true).Length == 0)
+            return;
+
         using var scope = _scopeFactory.CreateScope();
         var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
-        var jobName = context.BackgroundJob.Job.Type.Name + "." + context.BackgroundJob.Job.Method.Name;
+        var jobName = $"{jobType.Name}.{context.BackgroundJob.Job.Method.Name}";
         notificationService.SendJobFailureEmail(context.BackgroundJob.Id, jobName, failedState.Exception);
     }
 

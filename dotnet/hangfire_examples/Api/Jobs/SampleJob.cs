@@ -1,11 +1,10 @@
+using Api.Filters;
 using Hangfire;
 
 namespace Api.Jobs;
 
-// Hangfire will retry up to 5 times with exponential back-off.
-// After the 5th failure the job transitions to FailedState,
-// which is where NotifyOnFailureFilter kicks in.
 [AutomaticRetry(Attempts = 5, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
+[NotifyOnFailure]   // opt in: send failure email after all retries are exhausted
 public class SampleJob
 {
     private readonly ILogger<SampleJob> _logger;
